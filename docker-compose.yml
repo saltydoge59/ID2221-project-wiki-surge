@@ -1,0 +1,63 @@
+# Versions are pinned: the Spark/Kafka/Cassandra connectors constrain each other.
+services:
+  kafka:
+    image: apache/kafka:3.9.0
+    restart: unless-stopped
+    ports: ["29092:29092"]   # host access for tools; containers use kafka:9092
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_LISTENERS: INTERNAL://:9092,EXTERNAL://:29092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9092,EXTERNAL://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_LOG_RETENTION_HOURS: 24     # the Parquet archive is the durable copy; Kafka is the live buffer
+      KAFKA_HEAP_OPTS: -Xmx512m -Xms512m
+    volumes: [kafka-data:/var/lib/kafka/data]
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list"]
+      interval: 10s
+      retries: 12
+
+  minio:
+    build: ./minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    ports: ["9000:9000", "9001:9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_PASSWORD:-minioadmin}   # local-only default
+    volumes: [minio-data:/data]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      retries: 12
+
+  init:   # one-shot: topic + bucket
+    image: apache/kafka:3.9.0
+    depends_on: {kafka: {condition: service_healthy}, minio: {condition: service_healthy}}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists
+        --topic wiki-edits --partitions ${PARTITIONS:-6} --replication-factor 1
+    restart: "no"
+
+  producer:
+    build: ./producer
+    restart: unless-stopped
+    depends_on:
+      init: {condition: service_completed_successfully}
+      minio: {condition: service_healthy}
+    environment:
+      CONTACT: ${CONTACT:-no-contact-given}
+      FLUSH_SECONDS: ${FLUSH_SECONDS:-300}
+      MINIO_USER: ${MINIO_USER:-minioadmin}
+      MINIO_PASSWORD: ${MINIO_PASSWORD:-minioadmin}
+    volumes: [producer-state:/state]
+
+volumes: {kafka-data: {}, minio-data: {}, producer-state: {}}
