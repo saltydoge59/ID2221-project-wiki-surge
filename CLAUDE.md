@@ -34,6 +34,7 @@ Wikimedia SSE ──> producer ──┬──> Kafka (wiki-edits, keyed wiki|ti
 | `producer/` | SSE client; projects events, writes Kafka and Parquet. `replay.py` republishes the archive to a replay topic (rate or speed paced, key `page` or `wiki`); the `replay` compose service (profile `tools`) runs it. Tests: `test_producer.py`, `test_replay.py` (pytest, run in the producer image; 13 tests). |
 | `jobs/` | Spark jobs. `common.py` is the session factory (s3a to MinIO, Cassandra connector, RocksDB state store, UTC). `smoke.py` checks Kafka, Parquet and a Cassandra round-trip. `reference.py` is the batch thresholds/baseline job; `test_reference.py` checks it against a pure-Python oracle (plain scripts run with spark-submit, no pytest in the Spark image). `stream.py` is the streaming job (`parse`, `aggregate`, `flag` are pure functions the test reuses); `test_stream.py` runs it over the Kafka backlog into scratch tables and compares with an archive-built oracle. |
 | `cassandra/schema.cql` | Keyspace `wiki`; `windows` (partition `(wiki, day)`), `alerts` (partition `day`), `thresholds` (per namespace; `-1` = default), `baseline` (per wiki, namespace, hour), `smoke` (scratch). |
+| `dashboard/` | Streamlit app on :8501. `queries.py` (Cassandra reads, one partition each; pure pandas helpers), `chart.py` (palette, end-label placement, Altair spec; no Streamlit), `app.py` (page). `test_queries.py`: 10 tests incl. a headless app run. Started by `--profile app`. |
 | `results/` | Machine-readable outputs for the report (mounted at `/results` in the Spark container). `reference_summary.json` here is from a partial archive and is git-ignored until the final run. |
 | `minio/` | Dockerfile that builds MinIO from a pinned source commit (no official images any more). |
 | `spark/` | Dockerfile; connector jars resolved at build time into `/opt/ivy` so runs need no network. |
@@ -44,13 +45,15 @@ Done and collecting: Kafka (KRaft), MinIO, topic, producer plus archive. Done: S
 `jobs/smoke.py` prints `SMOKE OK` (verified 2026-10-04). Done on the partial archive: batch reference job
 (`jobs/reference.py`, tested by `jobs/test_reference.py`); re-run it once collection ends. Done: streaming job
 (`jobs/stream.py`, tested by `jobs/test_stream.py`); it is not running continuously yet, so the real `windows` and
-`alerts` tables are still empty. Done: replay tool (`producer/replay.py`). Not started: dashboard, evaluation, report.
+`alerts` tables are still empty. Done: replay tool (`producer/replay.py`); dashboard and the live `stream` service (profile `app`, running since 2026-10-04 evening; it writes the real `windows` and `alerts` tables, which now fill continuously). Not started: evaluation, report.
 
 Gotchas found while building: run Spark as `/opt/spark/bin/spark-submit` (it is not on PATH in the image);
 `ARCHIVE` needs the trailing slash (`s3a://archive/`); the smoke test writes only to `wiki.smoke`, never to
 `windows` or `alerts`; the stream test writes only to `windows_test` / `alerts_test` (TRUNCATE them before a run).
 `thresholds` and `baseline` are written by `reference.py`. The `/checkpoints` volume must be owned by `spark`
 (the Dockerfile does this; an old root-owned volume needs `docker compose exec -u root spark chown spark /checkpoints`).
+`SELECT count(*)` on the real `windows` table times out (it is large); count by partition or use the driver.
+The browser harness's `hover` does not trigger Vega pointer events but a click does, which matters only when screenshotting the chart.
 `windows` gained `last_ts` and `written_at` after creation, via `ALTER TABLE` (schema.cql has the new definition).
 
 ## Hard rules for this folder
@@ -93,6 +96,7 @@ Gotchas found while building: run Spark as `/opt/spark/bin/spark-submit` (it is 
 - Reference job: `docker compose exec spark /opt/spark/bin/spark-submit /jobs/reference.py` (`REFERENCE OK`); its tests: `.../test_reference.py` (`REFERENCE TESTS OK`)
 - Streaming job: `docker compose exec spark /opt/spark/bin/spark-submit /jobs/stream.py`; test: `.../test_stream.py` (`STREAM TESTS OK`, see README for the TRUNCATE step)
 - Replay: `docker compose run --rm replay --topic wiki-replay --recreate --rate 2000 --limit 100000` (see README; it refuses `wiki-edits`)
+- Live: `docker compose --profile app up -d --build stream dashboard` (dashboard http://localhost:8501); stop the stream before experiments: `docker compose --profile app stop stream`
 - Smoke test: `docker compose exec spark /opt/spark/bin/spark-submit /jobs/smoke.py` (expects `SMOKE OK`)
 - Producer and replay tests: see the command in `README.md` (runs pytest inside the image, 13 tests)
 - Stop collecting at the end of the window: `docker compose stop producer`

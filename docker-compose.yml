@@ -68,8 +68,9 @@ services:
     command: ["cqlsh", "cassandra", "-f", "/schema.cql"]
     restart: "no"
 
-  spark:   # idles; run jobs with `docker compose exec spark spark-submit /jobs/<job>.py`
+  spark:   # idles; run jobs with `docker compose exec spark /opt/spark/bin/spark-submit /jobs/<job>.py`
     build: ./spark
+    image: wiki-surge-spark
     restart: unless-stopped
     depends_on:
       cql-init: {condition: service_completed_successfully}
@@ -80,6 +81,30 @@ services:
       MINIO_USER: ${MINIO_USER:-minioadmin}
       MINIO_PASSWORD: ${MINIO_PASSWORD:-minioadmin}
     volumes: ["./jobs:/jobs", "./results:/results", "spark-checkpoints:/checkpoints"]
+
+  stream:   # the live streaming query. Needs thresholds first (jobs/reference.py). Start: --profile app up -d stream dashboard
+    build: ./spark
+    image: wiki-surge-spark
+    profiles: [app]
+    restart: unless-stopped
+    depends_on:
+      cql-init: {condition: service_completed_successfully}
+      kafka: {condition: service_healthy}
+      minio: {condition: service_healthy}
+    command: ["/opt/spark/bin/spark-submit", "/jobs/stream.py"]
+    environment:
+      MINIO_USER: ${MINIO_USER:-minioadmin}
+      MINIO_PASSWORD: ${MINIO_PASSWORD:-minioadmin}
+    volumes: ["./jobs:/jobs", "spark-checkpoints:/checkpoints"]
+
+  dashboard:   # http://localhost:8501
+    build: ./dashboard
+    profiles: [app]
+    restart: unless-stopped
+    ports: ["8501:8501"]
+    depends_on: {cql-init: {condition: service_completed_successfully}}
+    environment:
+      REFRESH: ${REFRESH:-30s}
 
   producer:
     build: ./producer

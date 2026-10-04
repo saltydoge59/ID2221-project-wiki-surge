@@ -25,8 +25,8 @@ evaluation (watermarks, state size, key skew, throughput/latency, fault recovery
 | 3 | Batch reference job (Spark SQL) | done and tested; quantile now over contested windows only; re-run after collection ends (about Oct 15) |
 | 4 | Streaming job (`jobs/stream.py`) | done and tested against an oracle; surge rule decided (below), quantile to be re-checked on the full archive |
 | 5 | Replay tool (`producer/replay.py`) | done, tested against an independent oracle |
-| 6 | Dashboard (Streamlit) | next |
-| 7 | Evaluation harness | not started |
+| 6 | Dashboard (Streamlit) and live `stream` service | done; looked at in a browser (see below) |
+| 7 | Evaluation harness | next |
 | 8 | Tests | producer tests exist (7); the rest not started |
 | 9 | README and 2-page report | README partial; report not started |
 | 10 | Fresh-eyes review in a separate chat (user's rule for high-stakes work) | not started |
@@ -94,6 +94,19 @@ pacing was computed after the timestamp shift and would have waited hours; a reg
 Preliminary key-skew result for evaluation (b), 20,000 events, 6 partitions (redo properly in step 7):
 key `wiki|title` gives partition sizes 3,468 / 3,418 / 3,387 / 3,346 / 3,244 / 3,137 (largest over smallest 1.11);
 key `wiki` gives 6,863 / 6,311 / 3,332 / 1,719 / 938 / 837 (8.2). This supports the proposal's choice of key.
+
+## Dashboard: what was verified
+
+Run in a browser against live data: the stream caught up from a stale start (525 s, 413 s, 125 s, then 10 s behind,
+matching the 10 s trigger); two real alerts appeared (wikidatawiki items with 14 and 19 edits, 2 editors, 86 to 95%
+bots, bot-dominated); the chart's crosshair and tooltip work. Screenshots found one bug, overlapping end labels (the gap
+was measured against the largest end value, not the y-range); it is fixed and a test fails on the old rule. The palette
+was run through the dataviz validator: all gates pass on white; aqua, yellow and magenta are under 3:1 contrast, which
+the legend, sparse direct labels and the table view cover. Deliberate simplifications: light theme only; at most 8 wikis,
+each with a permanent colour; no log axis (wikidatawiki and commonswiki dwarf the small wikis).
+
+For step 7: the `stream` service writes to the real tables and uses about 1.6 GB, so stop it before sweeping
+configurations, and use fresh checkpoint paths and the replay topic (`TOPIC=wiki-replay`).
 
 ## Numbers observed so far (72-minute slice, 2026-10-04; re-measure on the full archive for the report)
 

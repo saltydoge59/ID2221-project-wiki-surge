@@ -1,0 +1,11 @@
+# ponytail: light theme only; a dark mode needs its own validated palette steps (dataviz skill)
+[theme]
+base = "light"
+primaryColor = "#2a78d6"
+textColor = "#0b0b0b"
+
+[browser]
+gatherUsageStats = false   # no telemetry from a student project
+
+[server]
+headless = true

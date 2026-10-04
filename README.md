@@ -21,7 +21,8 @@ Wikimedia SSE ──> producer ──┬──> Kafka (wiki-edits, keyed wiki|ti
 | Batch reference job (thresholds and hourly baselines) | done on the partial archive; re-run when collection ends |
 | Streaming job (`jobs/stream.py`), tested against an oracle | done; not yet running continuously |
 | Replay tool (`producer/replay.py`), tested | done |
-| Dashboard, evaluation, report | not started |
+| Dashboard (`dashboard/`) and the live `stream` service, tested and checked in a browser | done |
+| Evaluation, report | not started |
 
 ## Requirements
 
@@ -92,6 +93,32 @@ archive; about 2 to 4 minutes):
 ```sh
 docker compose exec cassandra cqlsh -e "TRUNCATE wiki.windows_test; TRUNCATE wiki.alerts_test"
 docker compose exec spark /opt/spark/bin/spark-submit /jobs/test_stream.py     # last line: STREAM TESTS OK
+```
+
+## Live stream and dashboard
+
+```sh
+# needs thresholds first: run the reference job once (see above)
+docker compose --profile app up -d --build stream dashboard
+open http://localhost:8501
+```
+
+`stream` runs `jobs/stream.py` continuously (restarts on failure, resumes from its checkpoint). The first start drains
+the Kafka backlog (up to 24 hours), so the dashboard catches up over a minute or two. `dashboard` shows, for the
+period you pick: a table of flagged windows (top N by edit count), three headline numbers (age of the newest edit that
+reached Cassandra, edits in the last 5 minutes, flagged windows), and a line chart of edits per minute for up to 8
+wikis, with a table view underneath. Hover or click the chart for a crosshair and tooltip. When nothing is flagged it
+lists the busiest multi-editor windows instead. It refreshes every 30 s (`REFRESH=10s docker compose ... up -d`).
+
+- The chart gives each wiki one fixed colour (by rank in the archive), so filtering never repaints a line.
+- Light theme only. Colours come from the validated palette in `dashboard/chart.py`.
+- The `stream` container uses about 1.6 GB. Stop it before running evaluation experiments so they have the machine:
+  `docker compose --profile app stop stream`.
+- Dashboard tests (needs Cassandra; fixtures go to the scratch tables, the real ones are only read):
+
+```sh
+docker compose --profile app run --rm --no-deps --entrypoint sh -v "$PWD/dashboard:/app" dashboard \
+  -c "pip install -q pytest && python -m pytest -q /app/test_queries.py"     # 10 passed
 ```
 
 ## Replay tool
