@@ -23,14 +23,14 @@ def test_projection_and_key():
     pa.Table.from_pylist([rec], schema=SCHEMA)  # fits the archive schema
 
 
-def _run_main(monkeypatch, tmp_path, state=None):
+def _run_main(monkeypatch, tmp_path, state=None, first=EDIT):
     """Run main() against a fake feed that yields A, B then drops; returns the Last-Event-ID of each connect."""
     calls = []
 
     def fake_sse(last_id):
         calls.append(last_id)
         if len(calls) == 1:
-            yield "A", json.dumps(EDIT)
+            yield "A", json.dumps(first)
             yield "B", json.dumps({**EDIT, "id": 2})
             raise ConnectionError("dropped")
         raise SystemExit  # second connect: stop the infinite loop
@@ -59,6 +59,19 @@ def _run_main(monkeypatch, tmp_path, state=None):
 def test_reconnect_resumes_from_last_seen_id(monkeypatch, tmp_path):
     # buffer is intact on an in-process reconnect, so resuming from the last *flushed* id would duplicate rows
     assert _run_main(monkeypatch, tmp_path) == [None, "B"]
+
+
+def test_hidden_username_is_kept_as_null():
+    ev = {k: v for k, v in EDIT.items() if k != "user"}  # real case: ruwiki edit with a revision-deleted editor
+    rec = project(ev)
+    assert rec["user"] is None
+    pa.Table.from_pylist([rec], schema=SCHEMA)
+
+
+def test_malformed_event_does_not_stall_the_stream(monkeypatch, tmp_path):
+    # before the fix a KeyError escaped the loop, the reconnect replayed the same event, and collection stopped
+    bad = {"type": "edit", "id": 99}
+    assert _run_main(monkeypatch, tmp_path, first=bad) == [None, "B"]
 
 
 def test_restart_resumes_from_state_file(monkeypatch, tmp_path):

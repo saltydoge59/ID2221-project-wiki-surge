@@ -35,7 +35,8 @@ def project(ev):
     length = ev.get("length") or {}
     return {
         "id": ev["id"], "wiki": ev["wiki"], "title": ev["title"], "namespace": ev["namespace"],
-        "user": ev["user"], "bot": bool(ev["bot"]), "type": ev["type"],
+        "user": ev.get("user"),  # absent when the editor's name is hidden (revision-deleted); stored as null
+        "bot": bool(ev["bot"]), "type": ev["type"],
         "old_len": length.get("old") or 0, "new_len": length.get("new") or 0,
         "ts": datetime.fromtimestamp(ev["timestamp"], timezone.utc),
         "arrival": datetime.fromisoformat(ev["meta"]["dt"].replace("Z", "+00:00")),
@@ -101,12 +102,17 @@ def main():
     # Two resume points: after a process restart the buffer is gone, so resume from the last id the archive
     # holds (state file); on an in-process reconnect the buffer is intact, so resume from the last id seen.
     flushed_id = open(STATE).read().strip() if os.path.exists(STATE) else None
-    seen_id, backoff, n = flushed_id, 1, 0
+    seen_id, backoff, n, skipped = flushed_id, 1, 0, 0
     while True:
         try:
             for eid, data in sse(seen_id):
                 backoff = 1
-                rec = project(json.loads(data))
+                try:
+                    rec = project(json.loads(data))
+                except (KeyError, TypeError, ValueError) as e:
+                    # a malformed event must not stall the stream: reconnecting would replay the same event forever
+                    rec, skipped = None, skipped + 1
+                    print("skipped malformed event %r: %s" % (e, data[:200]), flush=True)
                 if rec:
                     prod.produce(TOPIC, key=key(rec), value=kafka_value(rec))
                     arc.add(rec)
@@ -121,7 +127,7 @@ def main():
                     if flushed_id:
                         with open(STATE, "w") as f:
                             f.write(flushed_id)
-                    print("flushed; total edits=%d" % n, flush=True)
+                    print("flushed; total edits=%d skipped=%d" % (n, skipped), flush=True)
         except Exception as e:  # reconnect with exponential backoff; Last-Event-ID avoids holes
             print("stream error: %r; retry in %ds" % (e, backoff), flush=True)
             time.sleep(backoff)

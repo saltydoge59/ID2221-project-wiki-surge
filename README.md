@@ -49,7 +49,10 @@ The archive needs about 10 days of continuous collection (started 2026-10-04, st
    `nohup caffeinate -dimsu -t 600000 >/dev/null 2>&1 &`.
 2. **Never run `docker compose down -v`** (or `docker volume prune`). It deletes the Kafka and MinIO volumes,
    which hold the archive. `docker compose down` without `-v` is safe.
-3. **Check on it now and then:** `docker compose ps` and the last `flushed` line in the producer log. The
+3. **Check on it now and then:** `docker compose ps` does not detect a stalled producer (it showed `Up`
+   while the stream looped on an error for several minutes on 2026-10-04). Look at the log instead:
+   `docker compose logs --timestamps producer | grep flushed | tail -2` should show a line less than 6 minutes
+   old, and `docker compose logs producer | grep -c "stream error"` should stay small. The
    producer reconnects with backoff and resumes from the last archived event id, so short outages leave no
    hole as long as they are within Wikimedia's replay window (documented as about 7 days; not verified here).
 4. **Keep some disk free.** The archive is small (about 0.15 GB/day), but Docker images and build cache are
@@ -65,6 +68,9 @@ Records are projected from the `recentchange` feed to edits and new pages only (
 Fields: `id, wiki, title, namespace, user, bot, type, old_len, new_len, ts` (revision timestamp, the event
 time) and `arrival` (`meta.dt`, when the event entered the stream). The proposal says ten fields; the
 archive keeps eleven, because `id` is needed for de-duplication and `arrival` for lag and latency measurement.
+
+`user` is null when MediaWiki hides the editor's name (the field is absent from the event); one such event
+was seen in the first hour. Events that cannot be parsed are skipped and counted (`skipped=N` in the flush log).
 
 Kafka keeps messages for 24 hours. The Parquet archive in MinIO is the durable copy.
 
