@@ -13,6 +13,8 @@ parent `../CLAUDE.md`; this file covers the project only. This folder is its own
 
 ## Important
 - Update this file whenever a key change occurs
+- **Remaining work, decisions and the evaluation plan live in `docs/PLAN.md`.** Read it before starting a task,
+  and tick off its progress table when a step finishes.
 
 ## Architecture
 
