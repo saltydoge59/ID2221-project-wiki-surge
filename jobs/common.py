@@ -5,6 +5,10 @@ from pyspark.sql import SparkSession
 
 KAFKA = os.environ.get("KAFKA_BOOTSTRAP", "kafka:9092")
 TOPIC = os.environ.get("TOPIC", "wiki-edits")
+# A window is "contested" with at least this many distinct editors. The surge threshold is a quantile over contested
+# windows only, and the stream flags only contested windows, so both jobs must agree on it. One bot iterating
+# produces the biggest single-editor windows (30 to 52 edits) and is not a surge.
+MIN_EDITORS = int(os.environ.get("MIN_EDITORS", "2"))
 ARCHIVE = os.environ.get("ARCHIVE", "s3a://archive/")  # trailing slash: s3a rejects a bucket with no path
 
 

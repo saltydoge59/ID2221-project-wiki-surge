@@ -41,10 +41,31 @@ def oracle(rows, thresholds, min_editors):
     return windows, alerts
 
 
+def test_flag(spark):
+    """flag() on hand-made windows: strict threshold, editor minimum, per-namespace limit, default, label boundary."""
+    th = {stream.DEFAULT_NS: 10.0, 0: 5.0}
+    rows = [  # (wiki, namespace, page, edit_count, distinct_editors, bot_fraction)
+        ("w", 0, "over", 6, 2, 0.0),           # > 5 and 2 editors: flagged, human
+        ("w", 0, "at-limit", 5, 3, 0.0),       # == 5 is not > 5
+        ("w", 0, "one-bot", 90, 1, 1.0),       # huge but a single editor: never a surge
+        ("w", 0, "bot", 7, 2, 0.5),            # bot_fraction exactly 0.5 is bot-dominated
+        ("w", 0, "mostly-human", 7, 4, 0.49),  # just under: human
+        ("w", 14, "default-over", 11, 2, 0.0),   # no row for ns 14: default 10, 11 > 10
+        ("w", 14, "default-at", 10, 2, 0.0)]     # == default
+    df = spark.createDataFrame(rows, "wiki string, namespace int, page string, edit_count int, "
+                                     "distinct_editors int, bot_fraction double")
+    got = {r["page"]: r["label"] for r in stream.flag(df, th, 2).collect()}
+    assert got == {"over": "human-dominated", "bot": "bot-dominated", "mostly-human": "human-dominated",
+                   "default-over": "human-dominated"}, got
+    assert {r["page"] for r in stream.flag(df, th, 1).collect()} == set(got) | {"one-bot"}
+    print("STREAM flag ok")
+
+
 def main():
     spark = session("test_stream", cores="4", spark__sql__shuffle__partitions=stream.SHUFFLE_PARTITIONS)
     spark.sparkContext.setLogLevel("ERROR")
     read = lambda t: spark.read.format(CASS).options(table=t, keyspace="wiki").load()
+    test_flag(spark)
     for t in (WT, AT):
         assert read(t).limit(1).count() == 0, "scratch table %s is not empty; TRUNCATE it first (see docstring)" % t
 
@@ -90,7 +111,7 @@ def main():
         _, want_m = oracle(keep, th, m)
         want_m = {k: v for k, v in want_m.items() if inside(k[2])}
         assert {k: v for k, v in got_a.items() if v[1] >= m} == want_m, "editor minimum %d disagrees with the oracle" % m
-        print("STREAM editor minimum %d ok: %d alerts" % (m, len(want_m)))
+        print("STREAM editor minimum %d ok: %d alerts%s" % (m, len(want_m), "" if want_m else " (none yet: only test_flag covers it)"))
 
     nulls = read(WT).filter("written_at is null or last_ts is null").limit(1).count()
     assert nulls == 0, "windows written without last_ts/written_at"

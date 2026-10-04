@@ -56,8 +56,12 @@ Java clock).
 
 Computes the surge thresholds and hourly baselines from the archive (de-duplicated on `id`) and writes them to
 Cassandra (`wiki.thresholds`, `wiki.baseline`) plus `results/reference_summary.json`. The threshold is the 99.9th
-percentile of edits per (page, minute) per namespace, with a pooled fallback (namespace `-1`) for namespaces with
-fewer than 1000 observed pairs. It is safe to re-run; rows are upserted.
+percentile (`QUANTILE`) of edits per (page, minute) per namespace, taken **only over contested windows**: those with
+at least `MIN_EDITORS` (2) distinct editors. The biggest windows overall are one bot editing one page (30 to 52
+edits), and a threshold set by them would sit above every real multi-editor surge. Namespaces with fewer than 1000
+contested pairs (`MIN_PAIRS`) use a pooled value (namespace `-1`). On a few hours of data every namespace falls back
+to the pooled value and nothing is flagged; the thresholds become meaningful on the full archive. It is safe to
+re-run; rows are upserted.
 
 ```sh
 docker compose exec spark /opt/spark/bin/spark-submit /jobs/reference.py        # last line: REFERENCE OK
@@ -68,8 +72,8 @@ docker compose exec spark /opt/spark/bin/spark-submit /jobs/test_reference.py   
 
 Reads Kafka, counts edits per (wiki, page) in one-minute event-time windows (event time is the revision timestamp,
 `ts`), and upserts every changed window into `wiki.windows` and every flagged window into `wiki.alerts`. A window
-is flagged when its edit count exceeds the namespace threshold from `wiki.thresholds` and it has at least
-`MIN_EDITORS` distinct editors; it is labelled bot-dominated when the bot fraction is at least 0.5. Run the
+is flagged when its edit count is strictly above the namespace threshold from `wiki.thresholds` and it has at
+least `MIN_EDITORS` (2, shared with the reference job) distinct editors; it is labelled bot-dominated when the bot fraction is at least 0.5. Run the
 reference job first, since the stream reads its thresholds.
 
 ```sh
@@ -77,7 +81,7 @@ docker compose exec spark /opt/spark/bin/spark-submit /jobs/stream.py          #
 ```
 
 Settings are environment variables, for example `docker compose exec -e WATERMARK="2 minutes" -e TRIGGER="5 seconds" spark ...`:
-`WATERMARK` (60 seconds), `TRIGGER` (10 seconds, or `availableNow` to drain the backlog and stop), `MIN_EDITORS` (3),
+`WATERMARK` (60 seconds), `TRIGGER` (10 seconds, or `availableNow` to drain the backlog and stop), `MIN_EDITORS` (2),
 `DEDUP` (1), `CHECKPOINT` (`/checkpoints/stream`), `MAX_OFFSETS_PER_TRIGGER`, `SHUFFLE_PARTITIONS` (6), `CORES`.
 Changing `SHUFFLE_PARTITIONS` or the query shape needs a new `CHECKPOINT` path.
 

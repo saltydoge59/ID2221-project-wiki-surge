@@ -10,11 +10,10 @@ import os
 from pyspark.sql import functions as F
 from pyspark.sql.types import (BooleanType, IntegerType, LongType, StringType, StructField, StructType)
 
-from common import KAFKA, TOPIC, session
+from common import KAFKA, MIN_EDITORS, TOPIC, session
 
 WATERMARK = os.environ.get("WATERMARK", "60 seconds")        # revision-to-arrival lag was p99 12 s, max 119 s
 TRIGGER = os.environ.get("TRIGGER", "10 seconds")            # or "availableNow" to drain the backlog and stop
-MIN_EDITORS = int(os.environ.get("MIN_EDITORS", "3"))        # separates real contention from one bot iterating
 BOT_DOMINATED = float(os.environ.get("BOT_DOMINATED", "0.5"))  # bot_fraction at or above this labels a window bot-dominated
 DEDUP = os.environ.get("DEDUP", "1") == "1"                  # the producer is at-least-once; costs state, see evaluation
 CHECKPOINT = os.environ.get("CHECKPOINT", "/checkpoints/stream")

@@ -22,8 +22,8 @@ evaluation (watermarks, state size, key skew, throughput/latency, fault recovery
 |---|---|---|
 | 1 | Compose stack: Kafka 3.9, MinIO, Cassandra 5.0.4, Spark 3.5.7 with pinned connector jars | done, `jobs/smoke.py` prints `SMOKE OK` |
 | 2 | Producer and Parquet archive | done, collecting; archive has 3,018 known duplicate rows (dedupe on `id`) |
-| 3 | Batch reference job (Spark SQL) | done and tested on the partial archive; re-run after collection ends (about Oct 15) |
-| 4 | Streaming job (`jobs/stream.py`) | done and tested against an oracle; **open decision on `MIN_EDITORS` / quantile below** |
+| 3 | Batch reference job (Spark SQL) | done and tested; quantile now over contested windows only; re-run after collection ends (about Oct 15) |
+| 4 | Streaming job (`jobs/stream.py`) | done and tested against an oracle; surge rule decided (below), quantile to be re-checked on the full archive |
 | 5 | Replay tool | next |
 | 6 | Dashboard (Streamlit) | not started |
 | 7 | Evaluation harness | not started |
@@ -69,21 +69,19 @@ evaluation (watermarks, state size, key skew, throughput/latency, fault recovery
    in the report where they differ.
 10. **Review** the report and README in a fresh chat, then do a clean-clone run-through.
 
-## Open decision: the surge rule flags almost nothing (found 2026-10-04 while testing step 4)
+## Decision (user, 2026-10-04): the surge rule
 
-Within the first 4 hours of data, the 99.9th-percentile threshold is about 11 edits per page per minute, and the
-largest windows (30 to 52 edits, all wikidatawiki items) have a **single editor**. Windows with 5 or more edits had
-1 editor in 884 cases, 2 in 11 and 3 in 1. So `MIN_EDITORS = 3` flags nothing; 2 flags 10 windows; 1 flags 179 (8
-bot-dominated). The proposal leaves the minimum open. `MIN_EDITORS = 3` is only my default.
+Problem found while testing step 4: within the first 4 hours the biggest windows (30 to 52 edits, wikidatawiki
+items) had a single editor, so a 99.9th-percentile threshold over all windows (about 11) was set by one bot and
+`MIN_EDITORS = 3` flagged nothing. **Chosen: compute the quantile only over windows with at least 2 distinct
+editors, and flag only such windows** (`MIN_EDITORS = 2`, shared in `jobs/common.py`).
 
-Options (user to choose, evaluation does not depend on it because throughput, latency, state and recovery are
-independent of how many windows are flagged):
-- Keep the rule and report that real surges are rare (honest, but the dashboard will be nearly empty): cheapest.
-- Compute the quantile only over windows with at least 2 editors, so the threshold reflects contested pages
-  rather than single-editor iteration (recommended: it matches the proposal's reason for the editor condition;
-  changes `reference.py` and its test).
-- Lower `MIN_EDITORS` to 2 and keep the quantile (one environment variable, but 10 alerts per 4 hours is thin).
-Re-check on the full archive before deciding; weekday traffic may differ from this Sunday.
+Consequence to report honestly: only 489 of 194,068 windows (0.25%) had 2 or more editors in those 4 hours, the
+largest with 10 edits. A 99.9th percentile over 489 points is the maximum, so every namespace falls back to the pooled
+threshold (10) and no window is flagged on that slice. On the full archive (about 60 times more data) the quantile has
+a real tail. By construction a 0.999 quantile flags about 0.1% of contested windows, so expect only a few alerts per
+day; `QUANTILE=0.99` would give about ten times more. **Re-check on the full archive and pick the quantile then**
+(it is an environment variable; `MIN_PAIRS` decides which namespaces get their own value).
 
 ## Numbers observed so far (72-minute slice, 2026-10-04; re-measure on the full archive for the report)
 

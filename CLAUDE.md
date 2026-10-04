@@ -73,6 +73,9 @@ Gotchas found while building: run Spark as `/opt/spark/bin/spark-submit` (it is 
   3,018 duplicate rows from a resume bug fixed on 2026-10-04 (one copy each, 2 at most).
 - `user` is **nullable**: MediaWiki omits it when the editor's name is hidden. Distinct-editor counts must
   tolerate nulls (`count(distinct user)` ignores them, which under-counts hidden editors).
+- **Surge rule**: threshold = `QUANTILE` (0.999) over *contested* windows (at least `MIN_EDITORS` = 2 distinct
+  editors; `common.MIN_EDITORS`, shared by `reference.py` and `stream.py`); a window is flagged when `edit_count` is
+  strictly above it and it has at least `MIN_EDITORS` editors. Decided by the user on 2026-10-04 (see `docs/PLAN.md`).
 - The archive starts at arrival 10:32:49 UTC on 2026-10-04. Kafka also holds about 2.5 minutes of earlier events
   (the first producer run's buffer, lost when I restarted it before its first flush), so Kafka-derived windows
   before 10:33 have no archive counterpart. Kafka retention is 24 h, so this cannot be backfilled after 10-05 10:30.

@@ -1,17 +1,19 @@
 """Batch reference job (Spark SQL over the Parquet archive): surge thresholds and hourly baselines.
 
 A mean-plus-k-sigma rule is not used: per-page-per-minute counts are zero-inflated and heavy-tailed, so a high
-empirical quantile is the reference. Results go to Cassandra (wiki.thresholds, wiki.baseline) and a JSON summary.
+empirical quantile is the reference. The quantile is taken over contested windows only (at least MIN_EDITORS distinct
+editors): the largest windows overall are one bot editing one page, and a threshold set by them would sit above
+every genuine multi-editor surge. Results go to Cassandra (wiki.thresholds, wiki.baseline) and a JSON summary.
 """
 import json
 import os
 
 from pyspark.sql import functions as F
 
-from common import ARCHIVE, session
+from common import ARCHIVE, MIN_EDITORS, session
 
 Q = float(os.environ.get("QUANTILE", "0.999"))
-MIN_PAIRS = int(os.environ.get("MIN_PAIRS", "1000"))   # fewer observed (page, minute) pairs: use the global quantile
+MIN_PAIRS = int(os.environ.get("MIN_PAIRS", "1000"))   # fewer contested (page, minute) pairs: use the global quantile
 DEFAULT_NS = -1                                        # row for namespaces not seen or too sparse
 OUT = os.environ.get("RESULTS_DIR", "/results")
 
@@ -21,19 +23,24 @@ def dedup(df):
 
 
 def page_minute_counts(df):
-    """Edit count per (wiki, namespace, page, minute), only for pairs with at least one edit."""
-    return df.groupBy("wiki", "namespace", "title", F.date_trunc("minute", "ts").alias("minute")).count()
+    """Edit count and distinct editors per (wiki, namespace, page, minute), only for pairs with at least one edit."""
+    return df.groupBy("wiki", "namespace", "title", F.date_trunc("minute", "ts").alias("minute")).agg(
+        F.count("*").alias("count"), F.size(F.collect_set("user")).alias("editors"))  # null users are ignored
 
 
-def thresholds(pm, q=Q, min_pairs=MIN_PAIRS):
+def thresholds(pm, q=Q, min_pairs=MIN_PAIRS, min_editors=MIN_EDITORS):
+    contested = pm.filter(F.col("editors") >= min_editors)
     pct = F.expr("percentile(count, %s)" % q)  # exact, linearly interpolated
-    glob = pm.agg(pct).first()[0]
-    by_ns = pm.groupBy("namespace").agg(F.count("*").alias("pairs"), pct.alias("ns_q"))
+    glob = contested.agg(pct).first()[0]
+    assert glob is not None, "no window has %d or more distinct editors; lower MIN_EDITORS" % min_editors
+    stats = contested.groupBy("namespace").agg(F.count("*").alias("pairs"), pct.alias("ns_q"))
+    # every namespace in the archive gets a row, even with no contested window, so a re-run never leaves a stale one
+    by_ns = pm.select("namespace").distinct().join(stats, "namespace", "left").fillna(0, ["pairs"])
     own = F.col("pairs") >= min_pairs
     rows = by_ns.select(
         "namespace", F.when(own, F.col("ns_q")).otherwise(F.lit(glob)).alias("threshold"),
-        "pairs", F.when(own, "namespace").otherwise("global").alias("source"))
-    default = pm.sparkSession.createDataFrame([(DEFAULT_NS, float(glob), pm.count(), "global")], rows.schema)
+        F.col("pairs").cast("long").alias("pairs"), F.when(own, "namespace").otherwise("global").alias("source"))
+    default = pm.sparkSession.createDataFrame([(DEFAULT_NS, float(glob), contested.count(), "global")], rows.schema)
     return rows.unionByName(default).withColumn("quantile", F.lit(float(q))) \
         .withColumn("computed_at", F.current_timestamp()) \
         .select("namespace", "threshold", "quantile", "pairs", "source", "computed_at")
@@ -59,18 +66,19 @@ def summary(raw, df, pm):
     lag = df.select((F.col("arrival").cast("double") - F.col("ts").cast("double")).alias("lag"))
     p50, p90, p99 = lag.selectExpr("percentile(lag, array(0.5, 0.9, 0.99))").first()[0]
     pairs = pm.count()
+    contested = pm.filter(F.col("editors") >= MIN_EDITORS).count()
     top3 = [(r["wiki"], r["count"]) for r in df.groupBy("wiki").count().orderBy(F.desc("count")).limit(3).collect()]
     return {
         "rows_raw": n_raw, "rows_deduplicated": n, "duplicate_rows": n_raw - n,
         "ts_min": str(lo), "ts_max": str(hi),
         "edits_per_second": round(n / (hi.timestamp() - lo.timestamp()), 2),
         "lag_seconds": {"p50": p50, "p90": p90, "p99": p99, "max": lag.agg(F.max("lag")).first()[0]},
-        "page_minute_pairs": pairs,
+        "page_minute_pairs": pairs, "contested_pairs": contested, "contested_share": round(contested / pairs, 5),
         "single_edit_share": round(pm.filter("count = 1").count() / pairs, 4),
         "max_edits_per_page_minute": pm.agg(F.max("count")).first()[0],
         "top3_wikis": top3, "top3_wiki_share": round(sum(c for _, c in top3) / n, 4),
         "bot_share": round(df.filter("bot").count() / n, 4), "null_user_rows": df.filter("user is null").count(),
-        "quantile": Q, "min_pairs": MIN_PAIRS,
+        "quantile": Q, "min_pairs": MIN_PAIRS, "min_editors": MIN_EDITORS,
     }
 
 

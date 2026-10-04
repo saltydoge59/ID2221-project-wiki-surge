@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS wiki.thresholds (
   namespace int PRIMARY KEY,
   threshold double,      -- flag a window when edit_count > threshold
   quantile double,
-  pairs bigint,          -- observed (page, minute) pairs behind the quantile
+  pairs bigint,          -- contested (page, minute) pairs behind the quantile; 0 means the namespace has none
   source text,           -- 'namespace' or 'global'
   computed_at timestamp
 );
