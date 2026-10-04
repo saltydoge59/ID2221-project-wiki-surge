@@ -1,3 +1,6 @@
 __pycache__/
 *.pyc
 .env
+
+# partial-archive results; remove this line to commit the final results/ after the full run
+results/*.json

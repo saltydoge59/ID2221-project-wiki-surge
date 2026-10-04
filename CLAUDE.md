@@ -31,21 +31,24 @@ Wikimedia SSE ──> producer ──┬──> Kafka (wiki-edits, keyed wiki|ti
 
 | Dir | Purpose |
 |---|---|
-| `producer/` | SSE client; projects events, writes Kafka and Parquet. `test_producer.py` is the only test file. |
-| `jobs/` | Spark jobs. `common.py` is the session factory (s3a to MinIO, Cassandra connector, RocksDB state store, UTC). `smoke.py` checks Kafka, Parquet and a Cassandra round-trip. |
-| `cassandra/schema.cql` | Keyspace `wiki`; tables `windows` (partition `(wiki, day)`) and `alerts` (partition `day`). |
+| `producer/` | SSE client; projects events, writes Kafka and Parquet. Tests: `test_producer.py` (pytest, run in the producer image). |
+| `jobs/` | Spark jobs. `common.py` is the session factory (s3a to MinIO, Cassandra connector, RocksDB state store, UTC). `smoke.py` checks Kafka, Parquet and a Cassandra round-trip. `reference.py` is the batch thresholds/baseline job; `test_reference.py` checks it against a pure-Python oracle (plain scripts run with spark-submit, no pytest in the Spark image). |
+| `cassandra/schema.cql` | Keyspace `wiki`; `windows` (partition `(wiki, day)`), `alerts` (partition `day`), `thresholds` (per namespace; `-1` = default), `baseline` (per wiki, namespace, hour), `smoke` (scratch). |
+| `results/` | Machine-readable outputs for the report (mounted at `/results` in the Spark container). `reference_summary.json` here is from a partial archive and is git-ignored until the final run. |
 | `minio/` | Dockerfile that builds MinIO from a pinned source commit (no official images any more). |
 | `spark/` | Dockerfile; connector jars resolved at build time into `/opt/ivy` so runs need no network. |
 
 ## Status (as of 2026-10-04; README.md holds the live table)
 
 Done and collecting: Kafka (KRaft), MinIO, topic, producer plus archive. Done: Spark and Cassandra in compose;
-`jobs/smoke.py` prints `SMOKE OK` (verified 2026-10-04). In progress: batch thresholds job. Not started:
-streaming job, replay tool, dashboard, evaluation, report.
+`jobs/smoke.py` prints `SMOKE OK` (verified 2026-10-04). Done on the partial archive: batch reference job
+(`jobs/reference.py`, tested by `jobs/test_reference.py`); re-run it once collection ends. Not started: streaming job,
+replay tool, dashboard, evaluation, report.
 
 Gotchas found while building: run Spark as `/opt/spark/bin/spark-submit` (it is not on PATH in the image);
 `ARCHIVE` needs the trailing slash (`s3a://archive/`); the smoke test writes only to `wiki.smoke`, never to
-`windows` or `alerts`, which must stay empty until a real job writes them.
+`windows` or `alerts`, which must stay empty until the streaming job writes them. `thresholds` and `baseline` are
+written by `reference.py`.
 
 ## Hard rules for this folder
 
@@ -78,6 +81,7 @@ Gotchas found while building: run Spark as `/opt/spark/bin/spark-submit` (it is 
 
 - Start: `CONTACT="you@example.com" docker compose up -d --build` (first build compiles MinIO, a few minutes)
 - Status / logs: `docker compose ps`; `docker compose logs -f producer` (a `flushed; total edits=N` line every 5 min)
+- Reference job: `docker compose exec spark /opt/spark/bin/spark-submit /jobs/reference.py` (`REFERENCE OK`); its tests: `.../test_reference.py` (`REFERENCE TESTS OK`)
 - Smoke test: `docker compose exec spark /opt/spark/bin/spark-submit /jobs/smoke.py` (expects `SMOKE OK`)
 - Producer tests: see the command in `README.md` (runs pytest inside the producer image)
 - Stop collecting at the end of the window: `docker compose stop producer`

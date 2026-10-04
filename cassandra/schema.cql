@@ -14,6 +14,27 @@ CREATE TABLE IF NOT EXISTS wiki.windows (
   PRIMARY KEY ((wiki, day), window_start, page)
 ) WITH CLUSTERING ORDER BY (window_start DESC, page ASC);
 
+-- Written by jobs/reference.py from the archive; read by the streaming job as a static table.
+-- namespace = -1 is the default row for namespaces too sparse for their own quantile (-1 is never edited).
+CREATE TABLE IF NOT EXISTS wiki.thresholds (
+  namespace int PRIMARY KEY,
+  threshold double,      -- flag a window when edit_count > threshold
+  quantile double,
+  pairs bigint,          -- observed (page, minute) pairs behind the quantile
+  source text,           -- 'namespace' or 'global'
+  computed_at timestamp
+);
+
+CREATE TABLE IF NOT EXISTS wiki.baseline (
+  wiki text,
+  namespace int,
+  hour int,              -- hour of day, UTC
+  edits bigint,
+  rate_per_min double,
+  bot_share double,
+  PRIMARY KEY ((wiki, namespace), hour)
+);
+
 -- Scratch table for jobs/smoke.py, so the smoke test never writes into the real tables.
 CREATE TABLE IF NOT EXISTS wiki.smoke (k text PRIMARY KEY, v int);
 

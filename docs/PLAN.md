@@ -22,8 +22,8 @@ evaluation (watermarks, state size, key skew, throughput/latency, fault recovery
 |---|---|---|
 | 1 | Compose stack: Kafka 3.9, MinIO, Cassandra 5.0.4, Spark 3.5.7 with pinned connector jars | done, `jobs/smoke.py` prints `SMOKE OK` |
 | 2 | Producer and Parquet archive | done, collecting; archive has 3,018 known duplicate rows (dedupe on `id`) |
-| 3 | Batch reference job (Spark SQL) | next |
-| 4 | Streaming job | not started |
+| 3 | Batch reference job (Spark SQL) | done and tested on the partial archive; re-run after collection ends (about Oct 15) |
+| 4 | Streaming job | next |
 | 5 | Replay tool | not started |
 | 6 | Dashboard (Streamlit) | not started |
 | 7 | Evaluation harness | not started |
@@ -33,11 +33,14 @@ evaluation (watermarks, state size, key skew, throughput/latency, fault recovery
 
 ## Remaining steps
 
-3. **Batch reference job** (`jobs/`): read the archive, de-duplicate on `id`, compute the per-page per-minute edit
+3. **Batch reference job** (`jobs/reference.py`, DONE; details kept for the report): read the archive, de-duplicate on `id`, compute the per-page per-minute edit
    count distribution and, per `(wiki, namespace, hour of day UTC)`, the typical rate and bot share. Output a
    high empirical quantile per namespace as the surge threshold (not mean plus k sigma: the counts are
-   zero-inflated and heavy-tailed). Decide where thresholds are stored (a Parquet file in MinIO or a Cassandra
-   table; not decided). Verify against pandas on a small slice. Re-run on the full archive after collection ends.
+   zero-inflated and heavy-tailed). Decided: thresholds go to Cassandra (`wiki.thresholds`, `wiki.baseline`) and a summary to
+   `results/reference_summary.json`. Choices: quantile 0.999 (`QUANTILE`), strict `edit_count > threshold`, pooled
+   fallback for namespaces under 1000 pairs (`MIN_PAIRS`), default row `namespace = -1`. Tested against a pure-Python
+   oracle on synthetic and real data; two deliberately broken copies fail the test. Re-run on the full archive after
+   collection ends and commit the final `results/` (remove the ignore line in `.gitignore`).
 4. **Streaming job**: Kafka source, parse JSON, event time = `ts`, watermark from the measured lag (proposal:
    median 1.7 s, up to 67 s; re-measure from `arrival - ts`), one-minute tumbling window per `(wiki, page)`:
    edit count, distinct editors (`user` is nullable), bot fraction, net bytes (`new_len - old_len`). Flag a window
@@ -65,6 +68,19 @@ evaluation (watermarks, state size, key skew, throughput/latency, fault recovery
    wikis, 93% of pages with one edit per interval, 249 bytes per record, 1.4 M edits per day) and correct them
    in the report where they differ.
 10. **Review** the report and README in a fresh chat, then do a clean-clone run-through.
+
+## Numbers observed so far (72-minute slice, 2026-10-04; re-measure on the full archive for the report)
+
+| Quantity | Proposal | Observed |
+|---|---|---|
+| Single-edit share of (page, minute) pairs | 93% | 94.8% |
+| Revision-to-arrival lag | median 1.7 s, max 67 s | median 1.3 s, p99 11.8 s, max 118.6 s |
+| Top-3 wiki share of edits | 71% | 60.7% (wikidatawiki, commonswiki, enwiki); time-of-day dependent |
+| Edit rate | about 16.5 per second | 14.4 per second |
+| Bot share of edits | not stated | 32% |
+
+The lag maximum exceeds the proposal's 67 s, so the watermark (step 4) needs an explicit trade-off, not just the
+median. `user` is null for 2 rows (hidden editors).
 
 ## Timeline
 

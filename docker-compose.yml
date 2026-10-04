@@ -79,7 +79,7 @@ services:
     environment:
       MINIO_USER: ${MINIO_USER:-minioadmin}
       MINIO_PASSWORD: ${MINIO_PASSWORD:-minioadmin}
-    volumes: ["./jobs:/jobs", "spark-checkpoints:/checkpoints"]
+    volumes: ["./jobs:/jobs", "./results:/results", "spark-checkpoints:/checkpoints"]
 
   producer:
     build: ./producer

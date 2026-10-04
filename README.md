@@ -18,7 +18,7 @@ Wikimedia SSE ──> producer ──┬──> Kafka (wiki-edits, keyed wiki|ti
 |---|---|
 | Kafka (KRaft), MinIO, topic, producer + Parquet archive | done, collecting |
 | Spark 3.5.7 + Cassandra 5.0.4 in compose, smoke test (Kafka, Parquet, Cassandra round-trip) | done |
-| Batch thresholds job | in progress |
+| Batch reference job (thresholds and hourly baselines) | done on the partial archive; re-run when collection ends |
 | Streaming job, replay tool, dashboard, evaluation, report | not started |
 
 ## Requirements
@@ -50,6 +50,18 @@ docker compose exec spark /opt/spark/bin/spark-submit /jobs/smoke.py   # last li
 
 The `NoClassDefFoundError: jnr/posix/POSIXHandler` in its log is harmless (the Cassandra driver falls back to a
 Java clock).
+
+## Batch reference job
+
+Computes the surge thresholds and hourly baselines from the archive (de-duplicated on `id`) and writes them to
+Cassandra (`wiki.thresholds`, `wiki.baseline`) plus `results/reference_summary.json`. The threshold is the 99.9th
+percentile of edits per (page, minute) per namespace, with a pooled fallback (namespace `-1`) for namespaces with
+fewer than 1000 observed pairs. It is safe to re-run; rows are upserted.
+
+```sh
+docker compose exec spark /opt/spark/bin/spark-submit /jobs/reference.py        # last line: REFERENCE OK
+docker compose exec spark /opt/spark/bin/spark-submit /jobs/test_reference.py   # last line: REFERENCE TESTS OK
+```
 
 ## What you need to do during the collection window
 
