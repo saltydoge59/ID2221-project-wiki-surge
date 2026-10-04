@@ -17,7 +17,8 @@ Wikimedia SSE ──> producer ──┬──> Kafka (wiki-edits, keyed wiki|ti
 | Part | State |
 |---|---|
 | Kafka (KRaft), MinIO, topic, producer + Parquet archive | done, collecting |
-| Spark + Cassandra in compose, batch thresholds job | in progress |
+| Spark 3.5.7 + Cassandra 5.0.4 in compose, smoke test (Kafka, Parquet, Cassandra round-trip) | done |
+| Batch thresholds job | in progress |
 | Streaming job, replay tool, dashboard, evaluation, report | not started |
 
 ## Requirements
@@ -39,6 +40,16 @@ User-Agent header sent to stream.wikimedia.org. Leave it unset to send `no-conta
 
 MinIO console: http://localhost:9001 (login `minioadmin` / `minioadmin`, a local-only default; override with
 `MINIO_USER` / `MINIO_PASSWORD`). Kafka from the host: `localhost:29092`.
+
+The first `--build` also builds the Spark image (about 3 GB, 15 to 20 minutes on a slow link, because the
+AWS SDK jar is 280 MB). Check that Spark can reach everything:
+
+```sh
+docker compose exec spark /opt/spark/bin/spark-submit /jobs/smoke.py   # last line must be: SMOKE OK
+```
+
+The `NoClassDefFoundError: jnr/posix/POSIXHandler` in its log is harmless (the Cassandra driver falls back to a
+Java clock).
 
 ## What you need to do during the collection window
 

@@ -24,7 +24,7 @@ Wikimedia SSE ──> producer ──┬──> Kafka (wiki-edits, keyed wiki|ti
 - Kafka is the live buffer (24 h retention). The **Parquet archive in MinIO is the durable copy**.
 - Everything runs in Docker Compose with pinned versions; nothing is installed on the host.
 - Spark runs in **local mode** inside one idle container (`sleep infinity`); run jobs with
-  `docker compose exec spark spark-submit /jobs/<job>.py`. Move to a standalone cluster only if the
+  `docker compose exec spark /opt/spark/bin/spark-submit /jobs/<job>.py`. Move to a standalone cluster only if the
   evaluation needs executors.
 
 | Dir | Purpose |
@@ -37,9 +37,13 @@ Wikimedia SSE ──> producer ──┬──> Kafka (wiki-edits, keyed wiki|ti
 
 ## Status (as of 2026-10-04; README.md holds the live table)
 
-Done and collecting: Kafka (KRaft), MinIO, topic, producer plus archive. In progress: Spark and Cassandra in
-compose, batch thresholds job. Not started: streaming job, replay tool, dashboard, evaluation, report.
-`cassandra/`, `jobs/`, `spark/` and the compose changes are **uncommitted** as of this writing.
+Done and collecting: Kafka (KRaft), MinIO, topic, producer plus archive. Done: Spark and Cassandra in compose;
+`jobs/smoke.py` prints `SMOKE OK` (verified 2026-10-04). In progress: batch thresholds job. Not started:
+streaming job, replay tool, dashboard, evaluation, report.
+
+Gotchas found while building: run Spark as `/opt/spark/bin/spark-submit` (it is not on PATH in the image);
+`ARCHIVE` needs the trailing slash (`s3a://archive/`); the smoke test writes only to `wiki.smoke`, never to
+`windows` or `alerts`, which must stay empty until a real job writes them.
 
 ## Hard rules for this folder
 
@@ -72,7 +76,7 @@ compose, batch thresholds job. Not started: streaming job, replay tool, dashboar
 
 - Start: `CONTACT="you@example.com" docker compose up -d --build` (first build compiles MinIO, a few minutes)
 - Status / logs: `docker compose ps`; `docker compose logs -f producer` (a `flushed; total edits=N` line every 5 min)
-- Smoke test: `docker compose exec spark spark-submit /jobs/smoke.py` (expects `SMOKE OK`)
+- Smoke test: `docker compose exec spark /opt/spark/bin/spark-submit /jobs/smoke.py` (expects `SMOKE OK`)
 - Producer tests: see the command in `README.md` (runs pytest inside the producer image)
 - Stop collecting at the end of the window: `docker compose stop producer`
 - MinIO console http://localhost:9001; Kafka from host `localhost:29092`; Cassandra `localhost:9042`

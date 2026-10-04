@@ -47,6 +47,40 @@ services:
         --topic wiki-edits --partitions ${PARTITIONS:-6} --replication-factor 1
     restart: "no"
 
+  cassandra:
+    image: cassandra:5.0.4
+    restart: unless-stopped
+    ports: ["9042:9042"]
+    environment:
+      MAX_HEAP_SIZE: 1G
+      HEAP_NEWSIZE: 256M
+    volumes: [cassandra-data:/var/lib/cassandra]
+    healthcheck:
+      test: ["CMD-SHELL", "cqlsh -e 'describe keyspaces'"]
+      interval: 15s
+      retries: 20
+      start_period: 40s
+
+  cql-init:   # one-shot: keyspace + tables
+    image: cassandra:5.0.4
+    depends_on: {cassandra: {condition: service_healthy}}
+    volumes: ["./cassandra/schema.cql:/schema.cql:ro"]
+    command: ["cqlsh", "cassandra", "-f", "/schema.cql"]
+    restart: "no"
+
+  spark:   # idles; run jobs with `docker compose exec spark spark-submit /jobs/<job>.py`
+    build: ./spark
+    restart: unless-stopped
+    depends_on:
+      cql-init: {condition: service_completed_successfully}
+      kafka: {condition: service_healthy}
+      minio: {condition: service_healthy}
+    command: ["sleep", "infinity"]
+    environment:
+      MINIO_USER: ${MINIO_USER:-minioadmin}
+      MINIO_PASSWORD: ${MINIO_PASSWORD:-minioadmin}
+    volumes: ["./jobs:/jobs", "spark-checkpoints:/checkpoints"]
+
   producer:
     build: ./producer
     restart: unless-stopped
@@ -60,4 +94,4 @@ services:
       MINIO_PASSWORD: ${MINIO_PASSWORD:-minioadmin}
     volumes: [producer-state:/state]
 
-volumes: {kafka-data: {}, minio-data: {}, producer-state: {}}
+volumes: {kafka-data: {}, minio-data: {}, producer-state: {}, cassandra-data: {}, spark-checkpoints: {}}
