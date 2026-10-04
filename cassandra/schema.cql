@@ -11,6 +11,8 @@ CREATE TABLE IF NOT EXISTS wiki.windows (
   distinct_editors int,
   bot_fraction double,
   net_bytes bigint,
+  last_ts timestamp,     -- newest revision timestamp in the window
+  written_at timestamp,  -- when the batch holding this version was written; written_at - last_ts is the latency
   PRIMARY KEY ((wiki, day), window_start, page)
 ) WITH CLUSTERING ORDER BY (window_start DESC, page ASC);
 
@@ -48,5 +50,19 @@ CREATE TABLE IF NOT EXISTS wiki.alerts (
   distinct_editors int,
   bot_fraction double,
   label text,
+  PRIMARY KEY ((day), window_start, wiki, page)
+) WITH CLUSTERING ORDER BY (window_start DESC, wiki ASC, page ASC);
+
+-- Scratch copies for jobs/test_stream.py (CQL has no CREATE TABLE ... LIKE in 5.0), so tests never touch the real
+-- tables. Keep these in step with windows and alerts above.
+CREATE TABLE IF NOT EXISTS wiki.windows_test (
+  wiki text, day date, window_start timestamp, page text, edit_count int, distinct_editors int,
+  bot_fraction double, net_bytes bigint, last_ts timestamp, written_at timestamp,
+  PRIMARY KEY ((wiki, day), window_start, page)
+) WITH CLUSTERING ORDER BY (window_start DESC, page ASC);
+
+CREATE TABLE IF NOT EXISTS wiki.alerts_test (
+  day date, window_start timestamp, wiki text, page text, edit_count int, distinct_editors int,
+  bot_fraction double, label text,
   PRIMARY KEY ((day), window_start, wiki, page)
 ) WITH CLUSTERING ORDER BY (window_start DESC, wiki ASC, page ASC);

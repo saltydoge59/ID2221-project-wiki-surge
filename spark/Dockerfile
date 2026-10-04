@@ -8,5 +8,7 @@ RUN echo 'from pyspark.sql import SparkSession; SparkSession.builder.getOrCreate
     && chmod -R a+rwX /opt/ivy && rm /tmp/warm.py
 RUN mkdir -p /opt/spark/conf \
     && printf 'spark.jars.packages %s\nspark.jars.ivy /opt/ivy\n' "$PKGS" > /opt/spark/conf/spark-defaults.conf
+# A named volume copies the ownership of the image directory on first use; without this it is root-owned.
+RUN mkdir -p /checkpoints /results && chown spark:spark /checkpoints /results
 USER spark
 WORKDIR /jobs

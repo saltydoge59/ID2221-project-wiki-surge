@@ -19,7 +19,8 @@ Wikimedia SSE ──> producer ──┬──> Kafka (wiki-edits, keyed wiki|ti
 | Kafka (KRaft), MinIO, topic, producer + Parquet archive | done, collecting |
 | Spark 3.5.7 + Cassandra 5.0.4 in compose, smoke test (Kafka, Parquet, Cassandra round-trip) | done |
 | Batch reference job (thresholds and hourly baselines) | done on the partial archive; re-run when collection ends |
-| Streaming job, replay tool, dashboard, evaluation, report | not started |
+| Streaming job (`jobs/stream.py`), tested against an oracle | done; not yet running continuously |
+| Replay tool, dashboard, evaluation, report | not started |
 
 ## Requirements
 
@@ -61,6 +62,31 @@ fewer than 1000 observed pairs. It is safe to re-run; rows are upserted.
 ```sh
 docker compose exec spark /opt/spark/bin/spark-submit /jobs/reference.py        # last line: REFERENCE OK
 docker compose exec spark /opt/spark/bin/spark-submit /jobs/test_reference.py   # last line: REFERENCE TESTS OK
+```
+
+## Streaming job
+
+Reads Kafka, counts edits per (wiki, page) in one-minute event-time windows (event time is the revision timestamp,
+`ts`), and upserts every changed window into `wiki.windows` and every flagged window into `wiki.alerts`. A window
+is flagged when its edit count exceeds the namespace threshold from `wiki.thresholds` and it has at least
+`MIN_EDITORS` distinct editors; it is labelled bot-dominated when the bot fraction is at least 0.5. Run the
+reference job first, since the stream reads its thresholds.
+
+```sh
+docker compose exec spark /opt/spark/bin/spark-submit /jobs/stream.py          # runs until you stop it (Ctrl-C)
+```
+
+Settings are environment variables, for example `docker compose exec -e WATERMARK="2 minutes" -e TRIGGER="5 seconds" spark ...`:
+`WATERMARK` (60 seconds), `TRIGGER` (10 seconds, or `availableNow` to drain the backlog and stop), `MIN_EDITORS` (3),
+`DEDUP` (1), `CHECKPOINT` (`/checkpoints/stream`), `MAX_OFFSETS_PER_TRIGGER`, `SHUFFLE_PARTITIONS` (6), `CORES`.
+Changing `SHUFFLE_PARTITIONS` or the query shape needs a new `CHECKPOINT` path.
+
+Test (runs the job over the Kafka backlog into scratch tables and compares with a pure-Python oracle built from the
+archive; about 2 to 4 minutes):
+
+```sh
+docker compose exec cassandra cqlsh -e "TRUNCATE wiki.windows_test; TRUNCATE wiki.alerts_test"
+docker compose exec spark /opt/spark/bin/spark-submit /jobs/test_stream.py     # last line: STREAM TESTS OK
 ```
 
 ## What you need to do during the collection window

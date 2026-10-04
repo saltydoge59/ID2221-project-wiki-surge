@@ -23,8 +23,8 @@ evaluation (watermarks, state size, key skew, throughput/latency, fault recovery
 | 1 | Compose stack: Kafka 3.9, MinIO, Cassandra 5.0.4, Spark 3.5.7 with pinned connector jars | done, `jobs/smoke.py` prints `SMOKE OK` |
 | 2 | Producer and Parquet archive | done, collecting; archive has 3,018 known duplicate rows (dedupe on `id`) |
 | 3 | Batch reference job (Spark SQL) | done and tested on the partial archive; re-run after collection ends (about Oct 15) |
-| 4 | Streaming job | next |
-| 5 | Replay tool | not started |
+| 4 | Streaming job (`jobs/stream.py`) | done and tested against an oracle; **open decision on `MIN_EDITORS` / quantile below** |
+| 5 | Replay tool | next |
 | 6 | Dashboard (Streamlit) | not started |
 | 7 | Evaluation harness | not started |
 | 8 | Tests | producer tests exist (7); the rest not started |
@@ -41,7 +41,7 @@ evaluation (watermarks, state size, key skew, throughput/latency, fault recovery
    fallback for namespaces under 1000 pairs (`MIN_PAIRS`), default row `namespace = -1`. Tested against a pure-Python
    oracle on synthetic and real data; two deliberately broken copies fail the test. Re-run on the full archive after
    collection ends and commit the final `results/` (remove the ignore line in `.gitignore`).
-4. **Streaming job**: Kafka source, parse JSON, event time = `ts`, watermark from the measured lag (proposal:
+4. **Streaming job** (`jobs/stream.py`, DONE; details kept for the report): Kafka source, parse JSON, event time = `ts`, watermark from the measured lag (proposal:
    median 1.7 s, up to 67 s; re-measure from `arrival - ts`), one-minute tumbling window per `(wiki, page)`:
    edit count, distinct editors (`user` is nullable), bot fraction, net bytes (`new_len - old_len`). Flag a window
    when its count exceeds the namespace threshold and distinct editors meet a minimum; label bot-dominated or
@@ -68,6 +68,22 @@ evaluation (watermarks, state size, key skew, throughput/latency, fault recovery
    wikis, 93% of pages with one edit per interval, 249 bytes per record, 1.4 M edits per day) and correct them
    in the report where they differ.
 10. **Review** the report and README in a fresh chat, then do a clean-clone run-through.
+
+## Open decision: the surge rule flags almost nothing (found 2026-10-04 while testing step 4)
+
+Within the first 4 hours of data, the 99.9th-percentile threshold is about 11 edits per page per minute, and the
+largest windows (30 to 52 edits, all wikidatawiki items) have a **single editor**. Windows with 5 or more edits had
+1 editor in 884 cases, 2 in 11 and 3 in 1. So `MIN_EDITORS = 3` flags nothing; 2 flags 10 windows; 1 flags 179 (8
+bot-dominated). The proposal leaves the minimum open. `MIN_EDITORS = 3` is only my default.
+
+Options (user to choose, evaluation does not depend on it because throughput, latency, state and recovery are
+independent of how many windows are flagged):
+- Keep the rule and report that real surges are rare (honest, but the dashboard will be nearly empty): cheapest.
+- Compute the quantile only over windows with at least 2 editors, so the threshold reflects contested pages
+  rather than single-editor iteration (recommended: it matches the proposal's reason for the editor condition;
+  changes `reference.py` and its test).
+- Lower `MIN_EDITORS` to 2 and keep the quantile (one environment variable, but 10 alerts per 4 hours is thin).
+Re-check on the full archive before deciding; weekday traffic may differ from this Sunday.
 
 ## Numbers observed so far (72-minute slice, 2026-10-04; re-measure on the full archive for the report)
 

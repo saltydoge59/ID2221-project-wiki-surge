@@ -32,7 +32,7 @@ Wikimedia SSE ──> producer ──┬──> Kafka (wiki-edits, keyed wiki|ti
 | Dir | Purpose |
 |---|---|
 | `producer/` | SSE client; projects events, writes Kafka and Parquet. Tests: `test_producer.py` (pytest, run in the producer image). |
-| `jobs/` | Spark jobs. `common.py` is the session factory (s3a to MinIO, Cassandra connector, RocksDB state store, UTC). `smoke.py` checks Kafka, Parquet and a Cassandra round-trip. `reference.py` is the batch thresholds/baseline job; `test_reference.py` checks it against a pure-Python oracle (plain scripts run with spark-submit, no pytest in the Spark image). |
+| `jobs/` | Spark jobs. `common.py` is the session factory (s3a to MinIO, Cassandra connector, RocksDB state store, UTC). `smoke.py` checks Kafka, Parquet and a Cassandra round-trip. `reference.py` is the batch thresholds/baseline job; `test_reference.py` checks it against a pure-Python oracle (plain scripts run with spark-submit, no pytest in the Spark image). `stream.py` is the streaming job (`parse`, `aggregate`, `flag` are pure functions the test reuses); `test_stream.py` runs it over the Kafka backlog into scratch tables and compares with an archive-built oracle. |
 | `cassandra/schema.cql` | Keyspace `wiki`; `windows` (partition `(wiki, day)`), `alerts` (partition `day`), `thresholds` (per namespace; `-1` = default), `baseline` (per wiki, namespace, hour), `smoke` (scratch). |
 | `results/` | Machine-readable outputs for the report (mounted at `/results` in the Spark container). `reference_summary.json` here is from a partial archive and is git-ignored until the final run. |
 | `minio/` | Dockerfile that builds MinIO from a pinned source commit (no official images any more). |
@@ -42,13 +42,16 @@ Wikimedia SSE ──> producer ──┬──> Kafka (wiki-edits, keyed wiki|ti
 
 Done and collecting: Kafka (KRaft), MinIO, topic, producer plus archive. Done: Spark and Cassandra in compose;
 `jobs/smoke.py` prints `SMOKE OK` (verified 2026-10-04). Done on the partial archive: batch reference job
-(`jobs/reference.py`, tested by `jobs/test_reference.py`); re-run it once collection ends. Not started: streaming job,
-replay tool, dashboard, evaluation, report.
+(`jobs/reference.py`, tested by `jobs/test_reference.py`); re-run it once collection ends. Done: streaming job
+(`jobs/stream.py`, tested by `jobs/test_stream.py`); it is not running continuously yet, so the real `windows` and
+`alerts` tables are still empty. Not started: replay tool, dashboard, evaluation, report.
 
 Gotchas found while building: run Spark as `/opt/spark/bin/spark-submit` (it is not on PATH in the image);
 `ARCHIVE` needs the trailing slash (`s3a://archive/`); the smoke test writes only to `wiki.smoke`, never to
-`windows` or `alerts`, which must stay empty until the streaming job writes them. `thresholds` and `baseline` are
-written by `reference.py`.
+`windows` or `alerts`; the stream test writes only to `windows_test` / `alerts_test` (TRUNCATE them before a run).
+`thresholds` and `baseline` are written by `reference.py`. The `/checkpoints` volume must be owned by `spark`
+(the Dockerfile does this; an old root-owned volume needs `docker compose exec -u root spark chown spark /checkpoints`).
+`windows` gained `last_ts` and `written_at` after creation, via `ALTER TABLE` (schema.cql has the new definition).
 
 ## Hard rules for this folder
 
@@ -70,6 +73,9 @@ written by `reference.py`.
   3,018 duplicate rows from a resume bug fixed on 2026-10-04 (one copy each, 2 at most).
 - `user` is **nullable**: MediaWiki omits it when the editor's name is hidden. Distinct-editor counts must
   tolerate nulls (`count(distinct user)` ignores them, which under-counts hidden editors).
+- The archive starts at arrival 10:32:49 UTC on 2026-10-04. Kafka also holds about 2.5 minutes of earlier events
+  (the first producer run's buffer, lost when I restarted it before its first flush), so Kafka-derived windows
+  before 10:33 have no archive counterpart. Kafka retention is 24 h, so this cannot be backfilled after 10-05 10:30.
 - Incident 2026-10-04: a hidden-username event raised `KeyError('user')`, the reconnect replayed the same event,
   and collection stalled for ~4 min (`docker compose ps` still said Up). Fixed by skipping malformed events.
   The archive has no gap over the stall (checked by arrival-time gaps, none over 15 s).
@@ -82,6 +88,7 @@ written by `reference.py`.
 - Start: `CONTACT="you@example.com" docker compose up -d --build` (first build compiles MinIO, a few minutes)
 - Status / logs: `docker compose ps`; `docker compose logs -f producer` (a `flushed; total edits=N` line every 5 min)
 - Reference job: `docker compose exec spark /opt/spark/bin/spark-submit /jobs/reference.py` (`REFERENCE OK`); its tests: `.../test_reference.py` (`REFERENCE TESTS OK`)
+- Streaming job: `docker compose exec spark /opt/spark/bin/spark-submit /jobs/stream.py`; test: `.../test_stream.py` (`STREAM TESTS OK`, see README for the TRUNCATE step)
 - Smoke test: `docker compose exec spark /opt/spark/bin/spark-submit /jobs/smoke.py` (expects `SMOKE OK`)
 - Producer tests: see the command in `README.md` (runs pytest inside the producer image)
 - Stop collecting at the end of the window: `docker compose stop producer`
