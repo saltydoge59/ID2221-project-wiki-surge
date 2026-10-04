@@ -20,7 +20,8 @@ Wikimedia SSE ──> producer ──┬──> Kafka (wiki-edits, keyed wiki|ti
 | Spark 3.5.7 + Cassandra 5.0.4 in compose, smoke test (Kafka, Parquet, Cassandra round-trip) | done |
 | Batch reference job (thresholds and hourly baselines) | done on the partial archive; re-run when collection ends |
 | Streaming job (`jobs/stream.py`), tested against an oracle | done; not yet running continuously |
-| Replay tool, dashboard, evaluation, report | not started |
+| Replay tool (`producer/replay.py`), tested | done |
+| Dashboard, evaluation, report | not started |
 
 ## Requirements
 
@@ -93,6 +94,27 @@ docker compose exec cassandra cqlsh -e "TRUNCATE wiki.windows_test; TRUNCATE wik
 docker compose exec spark /opt/spark/bin/spark-submit /jobs/test_stream.py     # last line: STREAM TESTS OK
 ```
 
+## Replay tool
+
+Republishes the archive into a **replay topic** (never the live one) in the live producer's format, for the
+evaluation and for anyone without a live feed. Duplicates are removed on `id` and events go out in arrival order.
+
+```sh
+docker compose run --rm replay --help
+docker compose run --rm replay --topic wiki-replay --recreate --rate 2000 --limit 100000      # fixed events per second
+docker compose run --rm replay --topic wiki-replay --rate 0 --start 2026-10-04T11:00 --end 2026-10-04T12:00   # as fast as possible
+docker compose run --rm replay --topic wiki-replay --speed 10 --start 2026-10-04T11:00 --end 2026-10-04T11:10 # 10x real time
+```
+
+- `--rate N` sends N events per second (0 = unthrottled) and keeps the original timestamps.
+- `--speed S` follows the archive's own arrival times at S times real time and shifts `ts` and `arrival` by one
+  constant so the replay looks live (watermarks then behave as they would on a live stream).
+- `--key page|wiki` chooses the Kafka key: `page` (`wiki|title`) is what the live producer uses; `wiki` is the
+  skew baseline for the evaluation. `--partitions N --recreate` rebuilds the replay topic with N partitions.
+- Point the streaming job at it with `TOPIC=wiki-replay` (and a fresh `CHECKPOINT` path).
+- The tool refuses the topic `wiki-edits`, including with `--recreate`, so replayed history cannot mix into the live
+  data or delete it.
+
 ## What you need to do during the collection window
 
 The archive needs about 10 days of continuous collection (started 2026-10-04, stop around 2026-10-15).
@@ -130,8 +152,9 @@ Kafka keeps messages for 24 hours. The Parquet archive in MinIO is the durable c
 ## Tests
 
 ```sh
-docker compose run --rm --no-deps -v "$PWD/producer/test_producer.py:/app/test_producer.py" producer \
-  sh -c "pip install -q pytest && python -m pytest -q /app/test_producer.py"
+docker compose run --rm --no-deps --entrypoint sh \
+  -v "$PWD/producer/test_producer.py:/app/test_producer.py" -v "$PWD/producer/test_replay.py:/app/test_replay.py" replay \
+  -c "pip install -q pytest && python -m pytest -q /app/test_producer.py /app/test_replay.py"   # 13 passed
 ```
 
 ## Notes

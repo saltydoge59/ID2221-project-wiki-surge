@@ -24,8 +24,8 @@ evaluation (watermarks, state size, key skew, throughput/latency, fault recovery
 | 2 | Producer and Parquet archive | done, collecting; archive has 3,018 known duplicate rows (dedupe on `id`) |
 | 3 | Batch reference job (Spark SQL) | done and tested; quantile now over contested windows only; re-run after collection ends (about Oct 15) |
 | 4 | Streaming job (`jobs/stream.py`) | done and tested against an oracle; surge rule decided (below), quantile to be re-checked on the full archive |
-| 5 | Replay tool | next |
-| 6 | Dashboard (Streamlit) | not started |
+| 5 | Replay tool (`producer/replay.py`) | done, tested against an independent oracle |
+| 6 | Dashboard (Streamlit) | next |
 | 7 | Evaluation harness | not started |
 | 8 | Tests | producer tests exist (7); the rest not started |
 | 9 | README and 2-page report | README partial; report not started |
@@ -48,7 +48,7 @@ evaluation (watermarks, state size, key skew, throughput/latency, fault recovery
    human-dominated by bot fraction. `foreachBatch` upserts into `wiki.windows` and `wiki.alerts` (idempotent, keyed
    as in `cassandra/schema.cql`). Checkpoints go under `/checkpoints`. Verify by replaying a small slice and
    comparing Cassandra against a batch recomputation of the same windows.
-5. **Replay tool**: read the archive from MinIO and publish to Kafka at a controlled rate, for the evaluation and
+5. **Replay tool** (`producer/replay.py`, DONE; details kept for the report): read the archive from MinIO and publish to Kafka at a controlled rate, for the evaluation and
    for graders who cannot use the live feed. Keep the same key (`wiki|title`) and value format as the producer.
 6. **Dashboard**: Streamlit reading Cassandra, top-N surging pages plus a per-wiki edit-rate timeline.
    Verify by running it and looking at a screenshot.
@@ -82,6 +82,18 @@ threshold (10) and no window is flagged on that slice. On the full archive (abou
 a real tail. By construction a 0.999 quantile flags about 0.1% of contested windows, so expect only a few alerts per
 day; `QUANTILE=0.99` would give about ten times more. **Re-check on the full archive and pick the quantile then**
 (it is an environment variable; `MIN_PAIRS` decides which namespaces get their own value).
+
+## Replay tool: what was verified, and a preliminary skew number
+
+Verified on 20,000 events of one archive hour: the replay topic holds exactly the de-duplicated archive events
+(ids equal an independent oracle), no duplicates, every key on exactly one partition, values equal to the archive.
+`--rate 2000` achieved 1,986 events per second; unthrottled it sent 56,000 per second (broker-side limit not yet
+found). `--speed 10` replayed 80.8 s of archive in 8.1 s with every event's lag unchanged. A bug found on the way:
+pacing was computed after the timestamp shift and would have waited hours; a regression test now covers it.
+
+Preliminary key-skew result for evaluation (b), 20,000 events, 6 partitions (redo properly in step 7):
+key `wiki|title` gives partition sizes 3,468 / 3,418 / 3,387 / 3,346 / 3,244 / 3,137 (largest over smallest 1.11);
+key `wiki` gives 6,863 / 6,311 / 3,332 / 1,719 / 938 / 837 (8.2). This supports the proposal's choice of key.
 
 ## Numbers observed so far (72-minute slice, 2026-10-04; re-measure on the full archive for the report)
 

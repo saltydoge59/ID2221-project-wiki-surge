@@ -94,4 +94,13 @@ services:
       MINIO_PASSWORD: ${MINIO_PASSWORD:-minioadmin}
     volumes: [producer-state:/state]
 
+  replay:   # not started by `up`; run with `docker compose run --rm replay --help`
+    build: ./producer
+    profiles: [tools]
+    entrypoint: ["python", "-u", "replay.py"]
+    depends_on: {kafka: {condition: service_healthy}, minio: {condition: service_healthy}}
+    environment:
+      MINIO_USER: ${MINIO_USER:-minioadmin}
+      MINIO_PASSWORD: ${MINIO_PASSWORD:-minioadmin}
+
 volumes: {kafka-data: {}, minio-data: {}, producer-state: {}, cassandra-data: {}, spark-checkpoints: {}}

@@ -31,7 +31,7 @@ Wikimedia SSE ──> producer ──┬──> Kafka (wiki-edits, keyed wiki|ti
 
 | Dir | Purpose |
 |---|---|
-| `producer/` | SSE client; projects events, writes Kafka and Parquet. Tests: `test_producer.py` (pytest, run in the producer image). |
+| `producer/` | SSE client; projects events, writes Kafka and Parquet. `replay.py` republishes the archive to a replay topic (rate or speed paced, key `page` or `wiki`); the `replay` compose service (profile `tools`) runs it. Tests: `test_producer.py`, `test_replay.py` (pytest, run in the producer image; 13 tests). |
 | `jobs/` | Spark jobs. `common.py` is the session factory (s3a to MinIO, Cassandra connector, RocksDB state store, UTC). `smoke.py` checks Kafka, Parquet and a Cassandra round-trip. `reference.py` is the batch thresholds/baseline job; `test_reference.py` checks it against a pure-Python oracle (plain scripts run with spark-submit, no pytest in the Spark image). `stream.py` is the streaming job (`parse`, `aggregate`, `flag` are pure functions the test reuses); `test_stream.py` runs it over the Kafka backlog into scratch tables and compares with an archive-built oracle. |
 | `cassandra/schema.cql` | Keyspace `wiki`; `windows` (partition `(wiki, day)`), `alerts` (partition `day`), `thresholds` (per namespace; `-1` = default), `baseline` (per wiki, namespace, hour), `smoke` (scratch). |
 | `results/` | Machine-readable outputs for the report (mounted at `/results` in the Spark container). `reference_summary.json` here is from a partial archive and is git-ignored until the final run. |
@@ -44,7 +44,7 @@ Done and collecting: Kafka (KRaft), MinIO, topic, producer plus archive. Done: S
 `jobs/smoke.py` prints `SMOKE OK` (verified 2026-10-04). Done on the partial archive: batch reference job
 (`jobs/reference.py`, tested by `jobs/test_reference.py`); re-run it once collection ends. Done: streaming job
 (`jobs/stream.py`, tested by `jobs/test_stream.py`); it is not running continuously yet, so the real `windows` and
-`alerts` tables are still empty. Not started: replay tool, dashboard, evaluation, report.
+`alerts` tables are still empty. Done: replay tool (`producer/replay.py`). Not started: dashboard, evaluation, report.
 
 Gotchas found while building: run Spark as `/opt/spark/bin/spark-submit` (it is not on PATH in the image);
 `ARCHIVE` needs the trailing slash (`s3a://archive/`); the smoke test writes only to `wiki.smoke`, never to
@@ -92,8 +92,9 @@ Gotchas found while building: run Spark as `/opt/spark/bin/spark-submit` (it is 
 - Status / logs: `docker compose ps`; `docker compose logs -f producer` (a `flushed; total edits=N` line every 5 min)
 - Reference job: `docker compose exec spark /opt/spark/bin/spark-submit /jobs/reference.py` (`REFERENCE OK`); its tests: `.../test_reference.py` (`REFERENCE TESTS OK`)
 - Streaming job: `docker compose exec spark /opt/spark/bin/spark-submit /jobs/stream.py`; test: `.../test_stream.py` (`STREAM TESTS OK`, see README for the TRUNCATE step)
+- Replay: `docker compose run --rm replay --topic wiki-replay --recreate --rate 2000 --limit 100000` (see README; it refuses `wiki-edits`)
 - Smoke test: `docker compose exec spark /opt/spark/bin/spark-submit /jobs/smoke.py` (expects `SMOKE OK`)
-- Producer tests: see the command in `README.md` (runs pytest inside the producer image)
+- Producer and replay tests: see the command in `README.md` (runs pytest inside the image, 13 tests)
 - Stop collecting at the end of the window: `docker compose stop producer`
 - MinIO console http://localhost:9001; Kafka from host `localhost:29092`; Cassandra `localhost:9042`
 - The Mac must stay awake: `nohup caffeinate -dimsu -t 600000 >/dev/null 2>&1 &` if it exited.
