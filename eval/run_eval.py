@@ -29,7 +29,7 @@ SPARK = ["exec", "-T", "spark", "/opt/spark/bin/spark-submit"]
 
 
 def dc(*a, check=True, timeout=None, **kw):
-    r = subprocess.run(["docker", "compose", *a], cwd=ROOT, capture_output=True, text=True, timeout=timeout, **kw)
+    r = subprocess.run(["docker", "compose", *map(str, a)], cwd=ROOT, capture_output=True, text=True, timeout=timeout, **kw)
     if check and r.returncode:
         raise RuntimeError("docker compose %s failed (%d):\n%s" % (" ".join(a[:6]), r.returncode, (r.stdout + r.stderr)[-1500:]))
     return r
@@ -247,8 +247,13 @@ def latency(q):
                 wait_for(RAW / (name + ".json.ready"), proc, "query start")
                 dc("run", "--rm", "replay", "--topic", topic, "--speed", "1", "--start", iso(start), "--end", iso(end), timeout=minutes * 60 + 600)
                 time.sleep(float(trig.split()[0]) + 15)  # let the last trigger fire
-            finally:
-                return stop_measured(name, proc)
+            except BaseException:       # never return from a finally: that would swallow this error and record an empty run
+                try:
+                    stop_measured(name, proc)
+                except Exception:
+                    pass
+                raise
+            return stop_measured(name, proc)
         r = guarded(one)
         lat = r["latency_s"]
         rows.append({"trigger": trig, "windows": lat["windows"], "p50_s": round(lat["p50"], 2), "p90_s": round(lat["p90"], 2),
@@ -281,8 +286,13 @@ def watermark(q):
                 wait_for(RAW / (name + ".json.ready"), proc, "query start")
                 dc("run", "--rm", "replay", "--topic", topic, "--speed", speed, "--start", iso(start), "--end", iso(end), timeout=minutes * 60 + 600)
                 time.sleep(15)
-            finally:
-                return stop_measured(name, proc)
+            except BaseException:       # never return from a finally: that would swallow this error and record an empty run
+                try:
+                    stop_measured(name, proc)
+                except Exception:
+                    pass
+                raise
+            return stop_measured(name, proc)
         r = guarded(one)
         s, c = r["summary"], r["completeness"]
         rows.append({"watermark": wm, "dedup": not nodedup, "events": c["expected_edits"], "counted": c["counted_edits"], "completeness": c["share"],
