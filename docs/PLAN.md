@@ -21,19 +21,19 @@ evaluation (watermarks, state size, key skew, throughput/latency, fault recovery
 | # | Step | State |
 |---|---|---|
 | 1 | Compose stack: Kafka 3.9, MinIO, Cassandra 5.0.4, Spark 3.5.7 with pinned connector jars | done, `jobs/smoke.py` prints `SMOKE OK` |
-| 2 | Producer and Parquet archive | done, collecting; archive has 3,018 known duplicate rows (dedupe on `id`) |
+| 2 | Producer and Parquet archive | done, collecting; archive has 3,018 known duplicate rows (dedupe on `wiki` and `id`; see the de-duplication note below) |
 | 3 | Batch reference job (Spark SQL) | done and tested; quantile now over contested windows only; re-run after collection ends (about Oct 15) |
 | 4 | Streaming job (`jobs/stream.py`) | done and tested against an oracle; surge rule decided (below), quantile to be re-checked on the full archive |
 | 5 | Replay tool (`producer/replay.py`) | done, tested against an independent oracle |
 | 6 | Dashboard (Streamlit) and live `stream` service | done; looked at in a browser (see below) |
 | 7 | Evaluation harness (`eval/run_eval.py`, `jobs/eval_stream.py`, `jobs/eval_compare.py`) | done: all five experiments run on the 10-day archive, CSVs in `results/eval/` (results below) |
 | 8 | Tests | producer 13, synth 5, reference, stream, dashboard 10: all pass |
-| 9 | README and 2-page report | README partial; report not started |
+| 9 | README and 2-page report | drafted: `docs/report.md` and `docs/report.pdf` (2 pages, `docs/build_report.sh`), README rewritten; awaiting the user's review |
 | 10 | Fresh-eyes review in a separate chat (user's rule for high-stakes work) | not started |
 
 ## Remaining steps
 
-3. **Batch reference job** (`jobs/reference.py`, DONE; details kept for the report): read the archive, de-duplicate on `id`, compute the per-page per-minute edit
+3. **Batch reference job** (`jobs/reference.py`, DONE; details kept for the report): read the archive, de-duplicate on (`wiki`, `id`), compute the per-page per-minute edit
    count distribution and, per `(wiki, namespace, hour of day UTC)`, the typical rate and bot share. Output a
    high empirical quantile per namespace as the surge threshold (not mean plus k sigma: the counts are
    zero-inflated and heavy-tailed). Decided: thresholds go to Cassandra (`wiki.thresholds`, `wiki.baseline`) and a summary to
@@ -136,7 +136,8 @@ writes cost roughly 45% of the achievable throughput at 8 cores. First batches p
 (b) Key skew, 6 partitions, 3 repetitions (`skew_summary.csv`): key `wiki|title` gives partitions within 2% of each
 other (largest over smallest 1.02) and task times within 2% of the median; key `wiki` alone gives a 10x spread in message
 counts (98,864 / 124,698 / 18,063 / 24,017 / 60,316 / 12,472 in one run) and the slowest task 1.19 to 1.26 times the
-median, which costs about 10 to 20% throughput. Task index is not the partition number, so the CSV lists counts and times
+median. Over three repetitions this showed no reliable throughput loss (means 29,800 and 30,200 events/s against a
+run-to-run spread of 16% and 22%); an earlier single run suggested 10 to 20%, which the repetitions did not confirm. Task index is not the partition number, so the CSV lists counts and times
 sorted independently.
 
 (c) Latency, revision timestamp to Cassandra, real-time replay of 4 minutes per setting (`latency.csv`), median / p99:
@@ -170,6 +171,17 @@ run-to-run noise. Without the resume, 100,000 to 260,000 windows would be missin
 Mistakes found and fixed on the way (all in the harness): a `finally: return` that hid a failed replay and recorded an
 empty run; kill trials that reused a stale checkpoint and fired before the run began; a skew CSV that paired Spark task
 indices with Kafka partitions; and four timings spoiled by a Mac sleeping, now detected and repeated automatically.
+
+## De-duplication key (bug found 2026-10-05)
+
+`id` is MediaWiki's recentchange counter, which is unique per wiki, not across wikis. The pipeline de-duplicated on `id`
+alone, so a genuine edit was dropped whenever two wikis shared a number. Found when the stream test failed on one missing
+window (`bhwiki`, `Module:Excerpt`): Kafka and the archive held the edit, the stream did not, and the test's oracle had the
+same flaw but kept the other of the two events. In the real archive (1.33 million edits) 13 ids are shared by two wikis
+(for example `eswikivoyage` and `mdfwiki`, both with 884399), so 13 edits, 0.001%, had been dropped. Synthetic ids are
+globally unique, so the synthetic part and every evaluation number are unaffected. The key is now (`wiki`, `id`) in the
+stream (`dropDuplicatesWithinWatermark`), the reference job, the replay tool, the generator's loader and the test oracles;
+each has a regression test that fails on the old code. The reference job was rerun on the full archive afterwards.
 
 ## Dashboard: what was verified
 

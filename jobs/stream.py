@@ -44,7 +44,7 @@ def parse(kafka_df):
 def aggregate(events, watermark=WATERMARK, dedup=DEDUP):
     e = events.withWatermark("ts", watermark)
     if dedup:
-        e = e.dropDuplicatesWithinWatermark(["id"])
+        e = e.dropDuplicatesWithinWatermark(["wiki", "id"])  # id is per wiki: two wikis can share a number
     return e.groupBy("wiki", "namespace", F.col("title").alias("page"), F.window("ts", "1 minute")).agg(
         F.count("*").alias("edit_count"),
         F.size(F.collect_set("user")).alias("distinct_editors"),  # count(distinct) is not allowed in streaming; null users are ignored

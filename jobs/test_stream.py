@@ -25,7 +25,7 @@ CASS = "org.apache.spark.sql.cassandra"
 def oracle(rows, thresholds, min_editors):
     """rows: (id, wiki, namespace, title, user, bot, old_len, new_len, ts_epoch). Returns windows and alerts by key."""
     g = {}
-    for _, w, ns, t, u, bot, old, new, e in {r[0]: r for r in rows}.values():  # dedup on id
+    for _, w, ns, t, u, bot, old, new, e in {(r[1], r[0]): r for r in rows}.values():  # dedup on (wiki, id)
         d = g.setdefault((w, t, e // 60 * 60), {"n": 0, "users": set(), "bots": 0, "net": 0, "ns": ns})
         d["n"] += 1
         d["bots"] += bot
@@ -105,7 +105,7 @@ def main():
            if want_w[k][:2] != got_w[k][:2] or want_w[k][3] != got_w[k][3] or abs(want_w[k][2] - got_w[k][2]) > 1e-9]
     assert not bad, "%d windows differ, e.g. %s" % (len(bad), bad[:3])
     print("STREAM windows ok: %d complete windows equal the oracle (%d duplicate ids in the archive were collapsed)"
-          % (len(want_w), len(rows) - len({r[0] for r in rows})))
+          % (len(want_w), len(rows) - len({(r[1], r[0]) for r in rows})))
     assert got_a == want_a, "alerts differ: %d missing, %d extra, %d changed" % (
         len(set(want_a) - set(got_a)), len(set(got_a) - set(want_a)), sum(1 for k in want_a if k in got_a and want_a[k] != got_a[k]))
     print("STREAM alerts ok: %d flagged windows equal the oracle (%d bot-dominated)"

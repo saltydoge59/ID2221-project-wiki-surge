@@ -115,3 +115,32 @@ def test_circular_fill_wraps_midnight():
     v[2], v[22] = 4.0, 8.0
     out = synth.circular_fill(v)
     assert out[2] == 4.0 and out[22] == 8.0 and out[0] == pytest.approx(6.0) and 4.0 < out[23] < 8.0   # hour 0 lies between 22 and 2
+
+
+def test_days_option_ends_at_the_hour_of_the_first_real_event(monkeypatch, tmp_path, capsys):
+    real = toy(np.random.default_rng(4), hours=1)
+    real["ts"] = real["ts"] + 1930                    # first real event at 10:32:10, not on an hour boundary
+    seen = {}
+    monkeypatch.setattr(synth, "s3", lambda: pafs.LocalFileSystem())
+    monkeypatch.setattr(synth, "load", lambda fs, bucket, **k: real)
+    monkeypatch.setattr(synth, "fit", lambda d: {"real": {"events": 1, "windows": 1, "hours": 1}, "q_new": 0.6})
+    monkeypatch.setattr(synth, "generate", lambda m, fs, b, start, end, *a, **k: seen.update(start=start, end=end) or {"events": 0, "files": 0})
+    synth.main(["generate", "--bucket", str(tmp_path), "--days", "2", "--dry-run"])
+    first = int(real["ts"].min())
+    assert seen["end"] == first // 3600 * 3600 and seen["end"] <= first          # never past the first real event
+    assert seen["end"] - seen["start"] == 2 * 86400
+    with pytest.raises(SystemExit, match="replaces"):
+        synth.main(["generate", "--bucket", str(tmp_path), "--days", "2", "--start", "2026-01-01T00:00"])
+    with pytest.raises(SystemExit, match="give --days"):
+        synth.main(["generate", "--bucket", str(tmp_path)])
+
+
+def test_load_deduplicates_on_wiki_and_id(tmp_path):
+    # regression: np.unique on id alone dropped one of two edits that share an id in different wikis
+    rec = lambda i, wiki: {"id": i, "wiki": wiki, "title": "T", "namespace": 0, "user": "u", "bot": False, "type": "edit", "old_len": 1,
+                           "new_len": 2, "ts": datetime(2026, 10, 4, 10, 0, tzinfo=timezone.utc), "arrival": datetime(2026, 10, 4, 10, 0, 1, tzinfo=timezone.utc)}
+    d = tmp_path / "archive" / "date=2026-10-04" / "hour=10"
+    d.mkdir(parents=True)
+    pq.write_table(pa.Table.from_pylist([rec(5, "awiki"), rec(5, "bwiki"), rec(5, "awiki")], schema=synth.SCHEMA), str(d / "part-1.parquet"))
+    got = synth.load(pafs.LocalFileSystem(), str(tmp_path / "archive"))
+    assert got["n"] == 2

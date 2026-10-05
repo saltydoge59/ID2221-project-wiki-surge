@@ -138,7 +138,7 @@ def main():
         if args.slice:
             start, end = args.slice
             expected = spark.read.parquet(ARCHIVE).filter((F.col("ts") >= F.lit(start).cast("timestamp")) & (F.col("ts") < F.lit(end).cast("timestamp"))) \
-                .select("id").distinct().count()
+                .select("wiki", "id").distinct().count()
             counted = w.agg(F.sum("edit_count")).first()[0] or 0
             out["completeness"] = {"expected_edits": expected, "counted_edits": counted, "share": round(counted / expected, 6) if expected else None}
     with open(args.out, "w") as f:

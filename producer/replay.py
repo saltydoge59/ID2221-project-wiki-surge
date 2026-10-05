@@ -66,8 +66,8 @@ def records(fs, bucket, start=None, end=None):
         rows = [r for r in rows if (not start or r["ts"] >= start) and (not end or r["ts"] < end)]
         seen = set()
         for r in sorted(rows, key=lambda r: (r["arrival"], r["id"])):
-            if r["id"] not in seen:
-                seen.add(r["id"])
+            if (r["wiki"], r["id"]) not in seen:   # id is MediaWiki's per-wiki counter, so the key is (wiki, id)
+                seen.add((r["wiki"], r["id"]))
                 yield r
 
 

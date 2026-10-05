@@ -10,7 +10,8 @@ formula. Pages are new (fraction --q-new) or drawn from a power-law stock; edito
 Output is ordinary archive files (same schema, date=/hour= layout) named synthetic-<hour>.parquet, with every title and
 user prefixed SYN_, plus a manifest archive/_synthetic_manifest.json. Real files are never written, changed or deleted.
 
-  python synth.py generate --start 2026-09-24T10:30 --end 2026-10-04T10:30       # the backfill
+  python synth.py generate --days 10                                              # 10 days ending where the real data begins
+  python synth.py generate --start 2026-09-24T10:30 --end 2026-10-04T10:30       # or explicit bounds
   python synth.py validate                                                        # synthetic vs real, same hours of day
   python synth.py generate --bucket synth-scratch ...                             # anywhere else, for tests
 """
@@ -64,7 +65,8 @@ def load(fs, bucket, synthetic=False, start=None, end=None):
     if not files:
         sys.exit("no %s files in %s" % ("synthetic" if synthetic else "real", bucket))
     t = pa.concat_tables([pq.read_table(f, filesystem=fs) for f in files])
-    _, first = np.unique(t["id"].to_numpy(), return_index=True)
+    wc0, _ = codes(t["wiki"])                       # id is a per-wiki counter: de-duplicate on (wiki, id)
+    _, first = np.unique(wc0 * (1 << 40) + t["id"].to_numpy(), return_index=True)
     t = t.take(np.sort(first))
     ts = t["ts"].cast(pa.timestamp("s")).cast(pa.int64()).to_numpy()
     keep = np.ones(len(ts), bool)
@@ -404,8 +406,9 @@ def main(argv=None):
         p.add_argument("--q-new", type=float, default=Q_NEW, help="fraction of windows on a brand-new page")
         p.add_argument("--vscale", type=float, default=VSCALE, help="size of the revisited-page stock, in days of the wiki's volume")
     g = sub.choices["generate"]
-    g.add_argument("--start", required=True, help="ISO, UTC")
-    g.add_argument("--end", required=True, help="ISO, UTC; must be before the first real event")
+    g.add_argument("--start", help="ISO, UTC")
+    g.add_argument("--end", help="ISO, UTC; must be before the first real event")
+    g.add_argument("--days", type=float, help="instead of --start/--end: this many days ending at the start of the first real event's hour")
     g.add_argument("--overwrite", action="store_true", help="replace existing synthetic files for these hours")
     g.add_argument("--dry-run", action="store_true", help="generate and count, write nothing")
     v = sub.choices["validate"]
@@ -416,8 +419,17 @@ def main(argv=None):
         sys.exit(validate(args))
     fs = s3()
     parse = lambda s: int((datetime.fromisoformat(s) if "+" in s else datetime.fromisoformat(s).replace(tzinfo=timezone.utc)).timestamp())
-    start, end = parse(args.start), parse(args.end)
     real = load(fs, args.bucket)
+    if args.days:
+        if args.start or args.end:
+            sys.exit("--days replaces --start and --end")
+        end = int(real["ts"].min()) // 3600 * 3600
+        start = end - int(args.days * 86400)
+        args.start, args.end = (datetime.fromtimestamp(t, timezone.utc).strftime("%Y-%m-%dT%H:%M") for t in (start, end))
+    elif args.start and args.end:
+        start, end = parse(args.start), parse(args.end)
+    else:
+        sys.exit("give --days N, or both --start and --end")
     if end > int(real["ts"].min()):
         sys.exit("--end %s is not before the first real event (%s)" % (args.end, datetime.fromtimestamp(int(real["ts"].min()), timezone.utc)))
     model = fit(real)

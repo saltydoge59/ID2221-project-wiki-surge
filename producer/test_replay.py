@@ -44,6 +44,14 @@ def test_arrival_order_and_dedup(archive):
     assert ids(archive) == [1, 2, 3, 4]  # id 2 once; sorted by arrival inside each hour, hours in order
 
 
+def test_same_id_in_two_wikis_is_two_events(tmp_path):
+    # ids are per-wiki counters: deduplicating on id alone dropped real edits (13 in the first 1.3 million)
+    write(tmp_path, H, [ev(5, "eswikivoyage", "A", H + timedelta(seconds=1)), ev(5, "mdfwiki", "B", H + timedelta(seconds=2)),
+                        ev(5, "mdfwiki", "B", H + timedelta(seconds=2))])      # the last one is a true duplicate
+    got = [(r["wiki"], r["id"]) for r in replay.records(pafs.LocalFileSystem(), str(tmp_path))]
+    assert got == [("eswikivoyage", 5), ("mdfwiki", 5)]
+
+
 def test_time_range_prunes_and_filters(archive):
     assert ids(archive, start=H + timedelta(seconds=20), end=H + timedelta(hours=1)) == [2, 3]
     assert ids(archive, start=H + timedelta(hours=1)) == [4]

@@ -20,7 +20,9 @@ OUT = os.environ.get("RESULTS_DIR", "/results")
 
 
 def dedup(df):
-    return df.dropDuplicates(["id"])  # the producer is at-least-once, so the archive holds repeated ids
+    # The producer is at-least-once, so the archive holds repeated events. `id` is MediaWiki's per-wiki counter, so two
+    # wikis can share a number: the key is (wiki, id), and id alone would drop genuine edits.
+    return df.dropDuplicates(["wiki", "id"])
 
 
 def page_minute_counts(df):

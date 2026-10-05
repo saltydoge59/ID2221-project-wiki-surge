@@ -74,7 +74,8 @@ The browser harness's `hover` does not trigger Vega pointer events but a click d
 - Only `type in ('edit','new')` is kept. Fields: `id, wiki, title, namespace, user, bot, type, old_len, new_len,
   ts, arrival`. That is eleven, though the proposal says ten (`id` for dedup, `arrival` for lag).
 - `ts` is the event time (revision timestamp); `arrival` is `meta.dt`. Watermarks use `ts`; latency uses `arrival`.
-- **De-duplicate on `id`** in every downstream job (producer is at-least-once). The archive already holds
+- **De-duplicate on (`wiki`, `id`)** in every downstream job (producer is at-least-once). `id` is MediaWiki's per-wiki
+  counter, so `id` alone drops genuine edits (13 of 1.33 M real ones before the fix on 2026-10-05; see `docs/PLAN.md`). The archive already holds
   3,018 duplicate rows from a resume bug fixed on 2026-10-04 (one copy each, 2 at most).
 - `user` is **nullable**: MediaWiki omits it when the editor's name is hidden. Distinct-editor counts must
   tolerate nulls (`count(distinct user)` ignores them, which under-counts hidden editors).

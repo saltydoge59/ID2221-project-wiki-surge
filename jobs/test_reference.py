@@ -15,6 +15,7 @@ SCHEMA = StructType([StructField("id", LongType()), StructField("wiki", StringTy
                      StructField("namespace", IntegerType()), StructField("title", StringType()),
                      StructField("bot", BooleanType()), StructField("epoch", LongType()),
                      StructField("user", StringType())])
+SHARED_ID = 9_000_001  # above every id synthetic() hands out, used by two different wikis
 BASE = 1791115200  # 2026-10-04 12:00:00 UTC, a minute boundary
 
 
@@ -33,7 +34,7 @@ def frame(spark, rows):
 
 def check(spark, rows, q, min_pairs, min_editors):
     """Compare Spark's thresholds and baseline with an oracle computed from the raw (duplicated) rows."""
-    uniq = list({r[0]: r for r in rows}.values())  # dedup on id
+    uniq = list({(r[1], r[0]): r for r in rows}.values())  # dedup on (wiki, id)
     count, users = Counter(), defaultdict(set)
     for _, w, n, t, _, e, u in uniq:
         count[(w, n, t, e // 60)] += 1
@@ -91,6 +92,9 @@ def synthetic():
         add("dewiki", 1, "t%d" % p, 50 + p, 2, editors=2)
     add("dewiki", 2, "solo", 70, 30)                       # ns 2: a single editor only: no contested pair at all
     rows += rows[:200]                                     # duplicated ids, as after a producer restart
+    # the same id in two wikis is two edits (ids are per-wiki counters); only the same wiki and id is a duplicate
+    rows.append((SHARED_ID, "xwiki", 0, "same-id-a", False, BASE + 95 * 60, "ux"))
+    rows.append((SHARED_ID, "ywiki", 0, "same-id-b", False, BASE + 95 * 60, "uy"))
     rows.append((10 ** 6, "enwiki", 0, "hidden", False, BASE + 90 * 60, None))  # hidden editor: not counted
     return rows
 
@@ -107,6 +111,8 @@ def main():
     th = {r["namespace"]: r for r in ref.thresholds(pm, 0.999, 1000, 2).collect()}
     assert th[0]["threshold"] == 3.0 and th[1]["source"] == "global", (th[0], th[1])
     assert th[2]["pairs"] == 0 and th[2]["source"] == "global", th[2]  # present, with no contested window
+    kept = ref.dedup(frame(spark, synthetic())).filter("id = %d" % SHARED_ID).count()
+    assert kept == 2, "dedup on id alone dropped one of two edits with the same id in different wikis (kept %d)" % kept
     one = {r["namespace"]: r["threshold"] for r in ref.thresholds(pm, 0.999, 1000, 1).collect()}
     assert one[0] != 3.0, "min_editors=1 must let single-editor windows into the quantile"
 
