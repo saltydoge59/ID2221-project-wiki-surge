@@ -4,3 +4,6 @@ __pycache__/
 
 # partial-archive results; remove this line to commit the final results/ after the full run
 results/*.json
+
+# raw evaluation logs and per-run JSON; the summary CSVs in results/eval/ are tracked
+results/eval/raw/

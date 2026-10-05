@@ -142,13 +142,40 @@ docker compose run --rm replay --topic wiki-replay --speed 10 --start 2026-10-04
 - The tool refuses the topic `wiki-edits`, including with `--recreate`, so replayed history cannot mix into the live
   data or delete it.
 
-## What you need to do during the collection window
+## Synthetic backfill
 
-The archive needs about 10 days of continuous collection (started 2026-10-04, stop around 2026-10-15).
+The archive holds 10 days of **synthetic** edits (2026-09-24 10:30 to 2026-10-04 10:30 UTC, 12.76 million events) followed
+by the **real** events collected live from 2026-10-04 10:32 UTC onward. Synthetic files are named
+`synthetic-<hour>.parquet`, every synthetic title and editor name starts with `SYN_`, and ids start at 10^12, so the
+two are never confused. Same schema, same `date=/hour=` layout, so every job treats them alike.
+`archive/_synthetic_manifest.json` records the seed, window and what the model was fitted on.
 
-1. **Keep the Mac plugged in and Docker Desktop running.** A sleeping Mac pauses the collector. An 11-day
-   `caffeinate -dimsu` is already running; if you reboot or it exits, restart it with
-   `nohup caffeinate -dimsu -t 600000 >/dev/null 2>&1 &`.
+How it is made (`producer/synth.py`): a run-level bootstrap with fresh identities. Every real (page, minute) window is a
+template with its edits, offsets, lags, bot flags and distinct-editor count; synthetic minutes draw templates at the
+real hour-of-day rate per wiki (with a fitted AR(1) modulation and a small day-to-day factor) and give each a new page,
+new editors, a time and an id. Page novelty and editor pools are power-law. `validate` generates 22 hours and compares
+them with the real 22 hours on 16 statistics (rate, wiki mix, bot share, single-edit share, bursts, contested windows,
+page novelty, lag percentiles, length changes); all are within tolerance.
+
+```sh
+docker compose --profile tools run --rm synth validate            # fit, generate 22 h into a scratch bucket, compare: VALIDATE OK
+docker compose --profile tools run --rm synth generate --start 2026-09-24T10:30 --end 2026-10-04T10:30
+```
+
+`generate` refuses to overwrite synthetic files (`--overwrite` replaces them) and never writes a real file. Limits: the
+model is fitted on, and validated against, the same real hours (a Sunday morning to a Monday morning), so it has no
+weekday or weekend pattern, and regenerating after more real data has arrived gives a different (equally valid) draw.
+
+## Live collection (optional)
+
+Live collection continues in the background and adds real events after the synthetic ones. Nothing depends on it any
+more, but it is worth leaving on.
+
+1. **Keep Docker Desktop running, and the Mac awake while you run experiments.** A sleeping Mac pauses everything,
+   including measured runs, whose timings then mean nothing (one throughput run took 34 minutes on 2026-10-05 because
+   the lid was closed). Closing the lid sleeps the Mac even with `caffeinate`, unless it is on power with an external
+   display. Collection itself survives sleep: the producer resumes from the last event id and catches up, and the archive
+   showed no gap across several sleeps.
 2. **Never run `docker compose down -v`** (or `docker volume prune`). It deletes the Kafka and MinIO volumes,
    which hold the archive. `docker compose down` without `-v` is safe.
 3. **Check on it now and then:** `docker compose ps` does not detect a stalled producer (it showed `Up`
@@ -159,7 +186,7 @@ The archive needs about 10 days of continuous collection (started 2026-10-04, st
    hole as long as they are within Wikimedia's replay window (documented as about 7 days; not verified here).
 4. **Keep some disk free.** The archive is small (about 0.15 GB/day), but Docker images and build cache are
    large. Check `df -h` if the machine gets near full.
-5. **Stop collecting** when the window ends: `docker compose stop producer`. Kafka and MinIO can stay up.
+5. **Stop collecting** whenever you like: `docker compose stop producer`. Kafka and MinIO can stay up.
 
 Restarting the producer is safe. It resumes from the last archived event id, so Kafka may receive a few
 duplicate messages; the batch job de-duplicates on `id`.
@@ -174,7 +201,8 @@ archive keeps eleven, because `id` is needed for de-duplication and `arrival` fo
 `user` is null when MediaWiki hides the editor's name (the field is absent from the event); one such event
 was seen in the first hour. Events that cannot be parsed are skipped and counted (`skipped=N` in the flush log).
 
-Kafka keeps messages for 24 hours. The Parquet archive in MinIO is the durable copy.
+Kafka keeps messages for 24 hours and holds only real events. The Parquet archive in MinIO is the durable copy and holds
+both the synthetic backfill and the real events (see Synthetic backfill).
 
 ## Tests
 

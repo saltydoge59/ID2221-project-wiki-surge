@@ -26,7 +26,7 @@ evaluation (watermarks, state size, key skew, throughput/latency, fault recovery
 | 4 | Streaming job (`jobs/stream.py`) | done and tested against an oracle; surge rule decided (below), quantile to be re-checked on the full archive |
 | 5 | Replay tool (`producer/replay.py`) | done, tested against an independent oracle |
 | 6 | Dashboard (Streamlit) and live `stream` service | done; looked at in a browser (see below) |
-| 7 | Evaluation harness | next |
+| 7 | Evaluation harness (`eval/run_eval.py`, `jobs/eval_stream.py`, `jobs/eval_compare.py`) | built; throughput checked at small scale, other four experiments not yet run |
 | 8 | Tests | producer tests exist (7); the rest not started |
 | 9 | README and 2-page report | README partial; report not started |
 | 10 | Fresh-eyes review in a separate chat (user's rule for high-stakes work) | not started |
@@ -94,6 +94,22 @@ pacing was computed after the timestamp shift and would have waited hours; a reg
 Preliminary key-skew result for evaluation (b), 20,000 events, 6 partitions (redo properly in step 7):
 key `wiki|title` gives partition sizes 3,468 / 3,418 / 3,387 / 3,346 / 3,244 / 3,137 (largest over smallest 1.11);
 key `wiki` gives 6,863 / 6,311 / 3,332 / 1,719 / 938 / 837 (8.2). This supports the proposal's choice of key.
+
+## Synthetic backfill (user's decision, 2026-10-05)
+
+Instead of waiting ten days for live collection, the archive was backfilled with 10 synthetic days
+(2026-09-24 10:30 to 2026-10-04 10:30 UTC, 12.76 M events) ahead of the real data (from 2026-10-04 10:32). Made by
+`producer/synth.py`, a run-level bootstrap with fresh identities fitted on the real 22 hours; `validate` compares 22
+synthetic hours with the real 22 on 16 statistics, all within tolerance (rate +8%, top-3 wiki share +1%, bot share 0%,
+single-edit windows -0.1%, contested windows -7%, distinct pages per edit +1%, lag p99 -1%). Two bugs were found by
+validation and fixed: an editor drawn per edit instead of per burst (contested windows 24x too many), and a new-page
+fraction that ignored revisits (distinct pages 22% too high). The reference job on the 13.9 M-row archive gives a
+99.9th-percentile threshold of 19 edits per page-minute (25,505 contested windows), where the 4-hour slice could only
+say 10. Real data keeps accumulating behind it. Sleeps never lost real data: the producer resumes and catches up.
+
+Evaluation notes: on 2026-10-05 a closed lid put the Mac to sleep mid-experiment and spoiled four of eight quick
+throughput rows (one run took 34 minutes). `eval/run_eval.py` now measures sleep (wall clock minus uptime clock) and
+repeats any run that overlaps one. Rerun everything after the lid is kept open.
 
 ## Dashboard: what was verified
 

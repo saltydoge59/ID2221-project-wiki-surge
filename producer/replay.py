@@ -116,6 +116,7 @@ def main(argv=None):
     a.add_argument("--end", type=parse_time, help="revision timestamp upper bound (exclusive)")
     a.add_argument("--limit", type=int, default=0, help="stop after this many events")
     a.add_argument("--bucket", default=os.environ.get("BUCKET", "archive"))
+    a.add_argument("--info", action="store_true", help="print the archive's hour range as JSON and exit")
     args = a.parse_args(argv)
     if args.topic == LIVE_TOPIC:
         sys.exit("refusing to replay into the live topic %r" % LIVE_TOPIC)
@@ -125,6 +126,10 @@ def main(argv=None):
     fs = pafs.S3FileSystem(endpoint_override=os.environ.get("S3_ENDPOINT", "minio:9000"), scheme="http",
                            access_key=os.environ.get("MINIO_USER", "minioadmin"),
                            secret_key=os.environ.get("MINIO_PASSWORD", "minioadmin"))
+    if args.info:
+        hours = [h for h, _ in hour_dirs(fs, args.bucket)]
+        print("INFO " + json.dumps({"first_hour": hours[0].isoformat(), "last_hour": hours[-1].isoformat(), "hours": len(hours)}))
+        return
     ensure_topic(AdminClient({"bootstrap.servers": BOOTSTRAP}), args.topic, args.partitions, args.recreate)
     prod = Producer({"bootstrap.servers": BOOTSTRAP, "linger.ms": 20, "compression.type": "lz4",
                      "queue.buffering.max.messages": 500000})

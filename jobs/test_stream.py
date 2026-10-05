@@ -72,9 +72,13 @@ def main():
     shutil.rmtree(CHECKPOINT, ignore_errors=True)
     stream.start(spark, CHECKPOINT, WT, AT, trigger="availableNow", watermark="30 minutes", min_editors=1).awaitTermination()
 
-    arc = spark.read.parquet(ARCHIVE).select("id", "wiki", "namespace", "title", "user", "bot", "old_len", "new_len",
+    # Kafka only holds real events: the synthetic backfill (files named synthetic-*) has no Kafka counterpart
+    arc = spark.read.parquet(ARCHIVE).filter(~F.input_file_name().contains("synthetic-")).select("id", "wiki", "namespace", "title", "user", "bot", "old_len", "new_len",
                                                F.col("ts").cast("long").alias("e"), F.col("arrival").cast("long").alias("a"))
-    rows = [tuple(r) for r in arc.collect()]
+    # The oracle runs in plain Python, so it only gets the last 3 hours of arrivals (the real archive is over a million rows).
+    # Windows that start after the cut-off are complete in it, since an event arrives after its own timestamp.
+    cut = arc.agg(F.max("a")).first()[0] - 3 * 3600
+    rows = [tuple(r) for r in arc.filter(F.col("a") >= cut).collect()]
     # complete windows only: every event of a window arrived (and so was archived) well before the last archived arrival
     hi = max(r[9] for r in rows) - 180
     # ...and whose events all arrived after the archive began: the first producer run's buffer (about 2.5 minutes,

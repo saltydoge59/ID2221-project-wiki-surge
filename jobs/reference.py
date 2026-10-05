@@ -8,6 +8,7 @@ every genuine multi-editor surge. Results go to Cassandra (wiki.thresholds, wiki
 import json
 import os
 
+from pyspark import StorageLevel
 from pyspark.sql import functions as F
 
 from common import ARCHIVE, MIN_EDITORS, session
@@ -89,8 +90,9 @@ def write_cassandra(df, table):
 def main():
     spark = session("reference")
     raw = spark.read.parquet(ARCHIVE)
-    df = dedup(raw).cache()
-    pm = page_minute_counts(df).cache()
+    # disk-backed: the archive is tens of millions of rows with the backfill, too many to hold deserialised in memory
+    df = dedup(raw).persist(StorageLevel.DISK_ONLY)
+    pm = page_minute_counts(df).persist(StorageLevel.DISK_ONLY)
     th = thresholds(pm).cache()
     write_cassandra(th, "thresholds")
     write_cassandra(baseline(df), "baseline")

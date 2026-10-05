@@ -128,4 +128,12 @@ services:
       MINIO_USER: ${MINIO_USER:-minioadmin}
       MINIO_PASSWORD: ${MINIO_PASSWORD:-minioadmin}
 
+  synth:   # synthetic backfill generator: `docker compose run --rm synth --help`
+    build: {context: ./producer, dockerfile: Dockerfile.synth}
+    profiles: [tools]
+    depends_on: {minio: {condition: service_healthy}}
+    environment:
+      MINIO_USER: ${MINIO_USER:-minioadmin}
+      MINIO_PASSWORD: ${MINIO_PASSWORD:-minioadmin}
+
 volumes: {kafka-data: {}, minio-data: {}, producer-state: {}, cassandra-data: {}, spark-checkpoints: {}}

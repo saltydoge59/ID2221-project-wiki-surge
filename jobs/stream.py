@@ -79,8 +79,11 @@ def save(df, table):
     df.write.format("org.apache.spark.sql.cassandra").mode("append").options(table=table, keyspace=KEYSPACE).save()
 
 
-def make_writer(windows_table, alerts_table, min_editors):
+def make_writer(windows_table, alerts_table, min_editors, sink="cassandra"):
     def write(batch, batch_id):
+        if sink == "noop":  # evaluation only: forces the whole batch to be computed but writes nothing
+            batch.write.format("noop").mode("append").save()
+            return
         batch.persist()  # used twice below; recomputing a micro-batch would read the source again
         w = flatten(batch).withColumn("written_at", F.current_timestamp())
         save(w.select(*WINDOW_COLS), windows_table)
@@ -90,13 +93,13 @@ def make_writer(windows_table, alerts_table, min_editors):
 
 
 def start(spark, checkpoint=CHECKPOINT, windows_table="windows", alerts_table="alerts", trigger=TRIGGER,
-          watermark=WATERMARK, min_editors=MIN_EDITORS):
+          watermark=WATERMARK, min_editors=MIN_EDITORS, sink="cassandra"):
     src = spark.readStream.format("kafka").option("kafka.bootstrap.servers", KAFKA).option("subscribe", TOPIC) \
         .option("startingOffsets", STARTING)
     if MAX_OFFSETS:
         src = src.option("maxOffsetsPerTrigger", MAX_OFFSETS)
     w = aggregate(parse(src.load()), watermark).writeStream.outputMode("update") \
-        .foreachBatch(make_writer(windows_table, alerts_table, min_editors)).option("checkpointLocation", checkpoint)
+        .foreachBatch(make_writer(windows_table, alerts_table, min_editors, sink)).option("checkpointLocation", checkpoint)
     return (w.trigger(availableNow=True) if trigger == "availableNow" else w.trigger(processingTime=trigger)).start()
 
 

@@ -31,6 +31,7 @@ Wikimedia SSE ──> producer ──┬──> Kafka (wiki-edits, keyed wiki|ti
 
 | Dir | Purpose |
 |---|---|
+| `producer/synth.py` | Synthetic backfill generator (own image, `Dockerfile.synth`, compose profile `tools`): `validate` and `generate`. `test_synth.py`: 5 tests. |
 | `producer/` | SSE client; projects events, writes Kafka and Parquet. `replay.py` republishes the archive to a replay topic (rate or speed paced, key `page` or `wiki`); the `replay` compose service (profile `tools`) runs it. Tests: `test_producer.py`, `test_replay.py` (pytest, run in the producer image; 13 tests). |
 | `jobs/` | Spark jobs. `common.py` is the session factory (s3a to MinIO, Cassandra connector, RocksDB state store, UTC). `smoke.py` checks Kafka, Parquet and a Cassandra round-trip. `reference.py` is the batch thresholds/baseline job; `test_reference.py` checks it against a pure-Python oracle (plain scripts run with spark-submit, no pytest in the Spark image). `stream.py` is the streaming job (`parse`, `aggregate`, `flag` are pure functions the test reuses); `test_stream.py` runs it over the Kafka backlog into scratch tables and compares with an archive-built oracle. |
 | `cassandra/schema.cql` | Keyspace `wiki`; `windows` (partition `(wiki, day)`), `alerts` (partition `day`), `thresholds` (per namespace; `-1` = default), `baseline` (per wiki, namespace, hour), `smoke` (scratch). |
@@ -59,11 +60,12 @@ The browser harness's `hover` does not trigger Vega pointer events but a click d
 ## Hard rules for this folder
 
 - **Never run `docker compose down -v`, `docker volume prune`, or anything that removes the `kafka-data`,
-  `minio-data` or `producer-state` volumes.** The 10-day collection window (2026-10-04 to about 2026-10-15)
-  cannot be re-run, so the archive is irreplaceable. Plain `docker compose down` is safe.
+  `minio-data` or `producer-state` volumes.** The real events (the model's fit source, and the live record) cannot be
+  collected again, and the synthetic backfill was drawn from a model fitted on them. Plain `docker compose down` is safe.
 - Do not rebuild or restart `producer`, `kafka` or `minio` casually. Restarting the producer is safe (it resumes
   from the last archived event id) but is at-least-once and can duplicate messages.
-- Changing the Parquet schema or partition layout mid-collection would split the archive. Ask first.
+- Changing the Parquet schema or partition layout would split the archive. Ask first. Synthetic files must keep the
+  real schema and layout exactly (checked: identical on-disk schema and compression).
 - Do not commit credentials. The `minioadmin` default is local-only; real values come from `MINIO_USER` /
   `MINIO_PASSWORD`.
 
@@ -79,7 +81,12 @@ The browser harness's `hover` does not trigger Vega pointer events but a click d
 - **Surge rule**: threshold = `QUANTILE` (0.999) over *contested* windows (at least `MIN_EDITORS` = 2 distinct
   editors; `common.MIN_EDITORS`, shared by `reference.py` and `stream.py`); a window is flagged when `edit_count` is
   strictly above it and it has at least `MIN_EDITORS` editors. Decided by the user on 2026-10-04 (see `docs/PLAN.md`).
-- The archive starts at arrival 10:32:49 UTC on 2026-10-04. Kafka also holds about 2.5 minutes of earlier events
+- **The archive is 10 synthetic days plus real data.** Synthetic: 2026-09-24 10:30 to 2026-10-04 10:30 UTC, 12.76 M
+  events, files `synthetic-<hour>.parquet`, titles and users prefixed `SYN_`, ids from 10^12, produced by
+  `producer/synth.py` (user's decision, 2026-10-05: backfill instead of waiting 10 days of live collection). Real:
+  from 10:32 on 2026-10-04, still growing. Anything that must see only real events (e.g. the Kafka comparison in
+  `test_stream.py`) filters `input_file_name()` for `synthetic-`. Say which data a number came from when reporting it.
+- The real archive starts at arrival 10:32:49 UTC on 2026-10-04. Kafka also holds about 2.5 minutes of earlier events
   (the first producer run's buffer, lost when I restarted it before its first flush), so Kafka-derived windows
   before 10:33 have no archive counterpart. Kafka retention is 24 h, so this cannot be backfilled after 10-05 10:30.
 - Incident 2026-10-04: a hidden-username event raised `KeyError('user')`, the reconnect replayed the same event,

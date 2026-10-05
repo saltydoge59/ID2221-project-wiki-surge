@@ -66,3 +66,29 @@ CREATE TABLE IF NOT EXISTS wiki.alerts_test (
   bot_fraction double, label text,
   PRIMARY KEY ((day), window_start, wiki, page)
 ) WITH CLUSTERING ORDER BY (window_start DESC, wiki ASC, page ASC);
+
+-- Evaluation scratch tables (jobs/eval_stream.py, eval/run_eval.py); same layout as windows and alerts.
+CREATE TABLE IF NOT EXISTS wiki.windows_eval_a (
+  wiki text, day date, window_start timestamp, page text, edit_count int, distinct_editors int,
+  bot_fraction double, net_bytes bigint, last_ts timestamp, written_at timestamp,
+  PRIMARY KEY ((wiki, day), window_start, page)
+) WITH CLUSTERING ORDER BY (window_start DESC, page ASC);
+
+CREATE TABLE IF NOT EXISTS wiki.alerts_eval_a (
+  day date, window_start timestamp, wiki text, page text, edit_count int, distinct_editors int,
+  bot_fraction double, label text,
+  PRIMARY KEY ((day), window_start, wiki, page)
+) WITH CLUSTERING ORDER BY (window_start DESC, wiki ASC, page ASC);
+
+-- Evaluation scratch tables (jobs/eval_stream.py, eval/run_eval.py); same layout as windows and alerts.
+CREATE TABLE IF NOT EXISTS wiki.windows_eval_b (
+  wiki text, day date, window_start timestamp, page text, edit_count int, distinct_editors int,
+  bot_fraction double, net_bytes bigint, last_ts timestamp, written_at timestamp,
+  PRIMARY KEY ((wiki, day), window_start, page)
+) WITH CLUSTERING ORDER BY (window_start DESC, page ASC);
+
+CREATE TABLE IF NOT EXISTS wiki.alerts_eval_b (
+  day date, window_start timestamp, wiki text, page text, edit_count int, distinct_editors int,
+  bot_fraction double, label text,
+  PRIMARY KEY ((day), window_start, wiki, page)
+) WITH CLUSTERING ORDER BY (window_start DESC, wiki ASC, page ASC);
