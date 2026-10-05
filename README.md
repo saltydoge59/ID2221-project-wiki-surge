@@ -22,7 +22,8 @@ Wikimedia SSE ──> producer ──┬──> Kafka (wiki-edits, keyed wiki|ti
 | Streaming job (`jobs/stream.py`), tested against an oracle | done; not yet running continuously |
 | Replay tool (`producer/replay.py`), tested | done |
 | Dashboard (`dashboard/`) and the live `stream` service, tested and checked in a browser | done |
-| Evaluation, report | not started |
+| Evaluation (5 experiments, `eval/run_eval.py`; results in `docs/PLAN.md` and `results/eval/`) | done |
+| Report | not started |
 
 ## Requirements
 
@@ -141,6 +142,16 @@ docker compose run --rm replay --topic wiki-replay --speed 10 --start 2026-10-04
 - Point the streaming job at it with `TOPIC=wiki-replay` (and a fresh `CHECKPOINT` path).
 - The tool refuses the topic `wiki-edits`, including with `--recreate`, so replayed history cannot mix into the live
   data or delete it.
+
+## Evaluation
+
+```sh
+python3 eval/run_eval.py all             # about 1.5 hours; --quick for a few minutes; or one of throughput skew latency watermark fault
+```
+
+Host side, standard library only. It stops the live `stream` service while it runs and restarts it afterwards, replays the
+archive into `ev-*` topics, and writes `results/eval/<experiment>.csv`. Keep the lid open: a run that overlaps a sleep is
+detected and repeated, but that costs time. Findings are summarised in `docs/PLAN.md`.
 
 ## Synthetic backfill
 

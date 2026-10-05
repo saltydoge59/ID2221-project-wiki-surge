@@ -26,8 +26,8 @@ evaluation (watermarks, state size, key skew, throughput/latency, fault recovery
 | 4 | Streaming job (`jobs/stream.py`) | done and tested against an oracle; surge rule decided (below), quantile to be re-checked on the full archive |
 | 5 | Replay tool (`producer/replay.py`) | done, tested against an independent oracle |
 | 6 | Dashboard (Streamlit) and live `stream` service | done; looked at in a browser (see below) |
-| 7 | Evaluation harness (`eval/run_eval.py`, `jobs/eval_stream.py`, `jobs/eval_compare.py`) | built; throughput checked at small scale, other four experiments not yet run |
-| 8 | Tests | producer tests exist (7); the rest not started |
+| 7 | Evaluation harness (`eval/run_eval.py`, `jobs/eval_stream.py`, `jobs/eval_compare.py`) | done: all five experiments run on the 10-day archive, CSVs in `results/eval/` (results below) |
+| 8 | Tests | producer 13, synth 5, reference, stream, dashboard 10: all pass |
 | 9 | README and 2-page report | README partial; report not started |
 | 10 | Fresh-eyes review in a separate chat (user's rule for high-stakes work) | not started |
 
@@ -110,6 +110,66 @@ say 10. Real data keeps accumulating behind it. Sleeps never lost real data: the
 Evaluation notes: on 2026-10-05 a closed lid put the Mac to sleep mid-experiment and spoiled four of eight quick
 throughput rows (one run took 34 minutes). `eval/run_eval.py` now measures sleep (wall clock minus uptime clock) and
 repeats any run that overlaps one. Rerun everything after the lid is kept open.
+
+## Evaluation results (2026-10-05)
+
+All on a 6-hour slice of the synthetic backfill (338,430 events, first complete hour of the archive), one Mac with
+8 CPUs and 8 GB for Docker, local-mode Spark, one repetition unless stated. Raw per-run output is in
+`results/eval/raw/` (git-ignored); the CSVs in `results/eval/` are tracked. Reproduce with
+`python3 eval/run_eval.py all` (about 1.5 hours, keep the lid open).
+
+(a) Throughput, events/s, Cassandra sink (`throughput.csv`):
+
+| Kafka partitions | 1 core | 2 cores | 4 cores | 8 cores |
+|---|---|---|---|---|
+| 1 | 12357 | 12236 | 12861 | 12130 |
+| 2 | 11501 | 17329 | 18135 | 17739 |
+| 4 | 10498 | 15929 | 19622 | 19683 |
+| 6 | 8788 | 13526 | 17045 | 17684 |
+
+Throughput stops growing once cores reach the partition count: one partition is one source task, so 1 partition is flat
+at about 12,000 events/s for any core count. The ceiling is about 18,000 to 20,000 events/s with the Cassandra sink. With
+the no-op sink at 6 partitions it reaches 15,561 / 25,013 / 29,188 / 31,894 events/s on 1/2/4/8 cores, so Cassandra
+writes cost roughly 45% of the achievable throughput at 8 cores. First batches pay start-up cost, so `events_per_s_steady`
+(without the first batch) is 15 to 40% higher.
+
+(b) Key skew, 6 partitions, 3 repetitions (`skew_summary.csv`): key `wiki|title` gives partitions within 2% of each
+other (largest over smallest 1.02) and task times within 2% of the median; key `wiki` alone gives a 10x spread in message
+counts (98,864 / 124,698 / 18,063 / 24,017 / 60,316 / 12,472 in one run) and the slowest task 1.19 to 1.26 times the
+median, which costs about 10 to 20% throughput. Task index is not the partition number, so the CSV lists counts and times
+sorted independently.
+
+(c) Latency, revision timestamp to Cassandra, real-time replay of 4 minutes per setting (`latency.csv`), median / p99:
+1 s trigger 1.95 / 13.5 s; 5 s 4.78 / 15.8; 10 s 6.48 / 19.3; 30 s 16.4 / 33.5; 60 s 31.6 / 61.6. The median is about
+half the trigger interval plus the 1.3 s median feed lag; the tail is the feed's own lag tail. `written_at` is stamped
+just before the batch's write, so add the median write time (0.9 to 2.0 s).
+
+(d) Watermark, replay 6x faster with the trigger shortened to match (`watermark.csv`):
+
+| watermark | completeness | aggregation state rows | de-duplication state rows |
+|---|---|---|---|
+| 0 seconds | 99.37% | 1137 | 204 |
+| 5 seconds | 99.63% | 1200 | 382 |
+| 10 seconds | 99.75% | 1163 | 559 |
+| 30 seconds | 99.91% | 1526 | 1257 |
+| 60 seconds | 99.98% | 1938 | 2223 |
+| 120 seconds | 100.00% | 2952 | 4224 |
+| 60 seconds (no de-dup) | 100.00% | 2055 | - |
+
+Completeness is Cassandra's summed edit counts over the distinct edits replayed. Spark's own "rows dropped by watermark"
+counter stays at 0 here even though edits are lost, so it cannot be used. De-duplication state (21x growth) is what
+scales with the watermark, more than the aggregation state (2.6x).
+
+(e) Fault injection (`fault.csv`): the query was killed with SIGKILL after 2, 5 and 8 committed batches, each time with
+the next batch already planned (in flight), then restarted from the same checkpoint. The recovered tables hold the same
+310,572 windows as the uninterrupted run, none lost or invented, and the same alerts. 4 to 8 windows differ in value:
+when two edits fall in one page-minute near a batch boundary, which one is the last depends on timing, and two
+uninterrupted reruns differ from the reference by 4 and 5 windows, so recovery is as exact as the pipeline's own
+run-to-run noise. Without the resume, 100,000 to 260,000 windows would be missing, so the check can fail.
+
+Mistakes found and fixed on the way (all in the harness): a `finally: return` that hid a failed replay and recorded an
+empty run; kill trials that reused a stale checkpoint and fired before the run began; a skew CSV that paired Spark task
+indices with Kafka partitions; and four timings spoiled by a Mac sleeping, now detected and repeated automatically.
 
 ## Dashboard: what was verified
 

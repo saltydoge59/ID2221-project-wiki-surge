@@ -46,7 +46,7 @@ Done and collecting: Kafka (KRaft), MinIO, topic, producer plus archive. Done: S
 `jobs/smoke.py` prints `SMOKE OK` (verified 2026-10-04). Done on the partial archive: batch reference job
 (`jobs/reference.py`, tested by `jobs/test_reference.py`); re-run it once collection ends. Done: streaming job
 (`jobs/stream.py`, tested by `jobs/test_stream.py`); it is not running continuously yet, so the real `windows` and
-`alerts` tables are still empty. Done: replay tool (`producer/replay.py`); dashboard and the live `stream` service (profile `app`, running since 2026-10-04 evening; it writes the real `windows` and `alerts` tables, which now fill continuously). Not started: evaluation, report.
+`alerts` tables are still empty. Done: replay tool (`producer/replay.py`); dashboard and the live `stream` service (profile `app`, running since 2026-10-04 evening; it writes the real `windows` and `alerts` tables, which now fill continuously). Done: evaluation, all five experiments (`eval/run_eval.py`, results in `docs/PLAN.md`). Not started: report.
 
 Gotchas found while building: run Spark as `/opt/spark/bin/spark-submit` (it is not on PATH in the image);
 `ARCHIVE` needs the trailing slash (`s3a://archive/`); the smoke test writes only to `wiki.smoke`, never to
@@ -104,6 +104,7 @@ The browser harness's `hover` does not trigger Vega pointer events but a click d
 - Streaming job: `docker compose exec spark /opt/spark/bin/spark-submit /jobs/stream.py`; test: `.../test_stream.py` (`STREAM TESTS OK`, see README for the TRUNCATE step)
 - Replay: `docker compose run --rm replay --topic wiki-replay --recreate --rate 2000 --limit 100000` (see README; it refuses `wiki-edits`)
 - Live: `docker compose --profile app up -d --build stream dashboard` (dashboard http://localhost:8501); stop the stream before experiments: `docker compose --profile app stop stream`
+- Evaluation: `python3 eval/run_eval.py all` (host Python, stdlib only; stops and restarts the live stream; keep the lid open)
 - Smoke test: `docker compose exec spark /opt/spark/bin/spark-submit /jobs/smoke.py` (expects `SMOKE OK`)
 - Producer and replay tests: see the command in `README.md` (runs pytest inside the image, 13 tests)
 - Stop collecting at the end of the window: `docker compose stop producer`
