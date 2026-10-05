@@ -216,10 +216,12 @@ def skew(q):
                 return run_measured("skew-%s-r%d" % (key, rep), ["--topic", topic, "--cores", 6, "--shuffle-partitions", 6, "--kafka-partitions", 6,
                                                                 "--max-offsets", max(n // 8, 1), "--sink", "noop", "--tables", "a", "--task-times"])
             r = guarded(one)
+            # Spark's task index is not the Kafka partition number, so message counts and task times are NOT paired:
+            # each column is sorted on its own, largest first, and `rank` is only a row number.
             ms = r["task_ms"]
-            for i, c in enumerate(counts):
-                rows.append({"key": key, "rep": rep, "partition": i, "messages": c, "task_ms": ms[i] if i < len(ms) else None})
             srt = sorted(ms)
+            for i, (c, t) in enumerate(zip(sorted(counts, reverse=True), sorted(ms, reverse=True))):
+                rows.append({"key": key, "rep": rep, "rank": i + 1, "messages_sorted": c, "task_ms_sorted": round(t)})
             summ.append({"key": key, "rep": rep, "events": n, "messages_max_over_min": round(max(counts) / max(min(counts), 1), 2),
                          "task_ms_max_over_median": round(srt[-1] / srt[len(srt) // 2], 2) if srt else None,
                          "events_per_s": r["summary"]["rows_per_s_busy"], "events_per_s_steady": r["summary"]["rows_per_s_steady"]})
