@@ -1,0 +1,6 @@
+kind,kill_after_commits,batches_in_reference,offsets_planned_at_kill,commits_at_kill,in_flight_batch,interrupted_windows_missing,windows_a,windows_b,windows_only_a,windows_only_b,windows_differing,alerts_a,alerts_b,alerts_differing,identical
+control (no failure),,14,,,,,310572,310572,0,0,5,0,0,0,False
+control (no failure),,14,,,,,310572,310572,0,0,4,0,0,0,False
+kill and recover,2,14,3,2,True,258604,310572,310572,0,0,8,0,0,0,False
+kill and recover,5,14,6,5,True,180698,310572,310572,0,0,4,0,0,0,False
+kill and recover,8,14,9,8,True,103634,310572,310572,0,0,5,0,0,0,False

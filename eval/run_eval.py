@@ -328,10 +328,27 @@ def fault(q):
     total = ref["summary"]["batches"]
     log("uninterrupted reference run: %d batches" % total)
     rows = []
+    # Controls: the same pipeline run again with no failure. Which edit survives when two land on one page-minute around a
+    # batch boundary varies from run to run, so a recovered run is judged against this noise floor, not against zero.
+    noise = []
+    for i in (1, 2):
+        truncate("b")
+        run_measured("fault-ctrl%d" % i, common + ["--tables", "b"])
+        c = compare("a", "b")
+        noise.append(c["windows"]["differing"])
+        rows.append({"kind": "control (no failure)", "kill_after_commits": "", "batches_in_reference": total, "offsets_planned_at_kill": "", "commits_at_kill": "",
+                     "in_flight_batch": "", "interrupted_windows_missing": "", "windows_a": c["windows"]["rows_a"], "windows_b": c["windows"]["rows_b"],
+                     "windows_only_a": c["windows"]["only_a"], "windows_only_b": c["windows"]["only_b"], "windows_differing": c["windows"]["differing"],
+                     "alerts_a": c["alerts"]["rows_a"], "alerts_b": c["alerts"]["rows_b"],
+                     "alerts_differing": c["alerts"]["only_a"] + c["alerts"]["only_b"] + c["alerts"]["differing"], "identical": c["identical"]})
+        write_csv("fault", rows)
     for kill_at in ([3] if q.quick else [2, 5, 8]):
         name = "fault-b-k%d" % kill_at
         truncate("b")
+        # A checkpoint left by an earlier run would show its old commits at once and the kill would fire before this run starts.
+        dc("exec", "-T", "spark", "rm", "-rf", "/checkpoints/" + name, check=False)
         proc = start_measured(name, common + ["--tables", "b"])
+        wait_for(RAW / (name + ".json.ready"), proc, "query start")
         t0 = time.time()
         while container_count("/checkpoints/%s/commits" % name) < kill_at:
             if proc.poll() is not None or time.time() - t0 > 600:
@@ -344,15 +361,17 @@ def fault(q):
         control = compare("a", "b")  # the interrupted tables must NOT equal the reference: proves the diff can fail
         run_measured(name + "-resume", common + ["--tables", "b", "--resume"], ckpt=name)  # same checkpoint: recovery
         final = compare("a", "b")
-        rows.append({"kill_after_commits": kill_at, "batches_in_reference": total, "offsets_planned_at_kill": offs, "commits_at_kill": commits,
+        rows.append({"kind": "kill and recover", "kill_after_commits": kill_at, "batches_in_reference": total, "offsets_planned_at_kill": offs, "commits_at_kill": commits,
                      "in_flight_batch": offs > commits, "interrupted_windows_missing": control["windows"]["only_a"] + control["windows"]["differing"],
                      "windows_a": final["windows"]["rows_a"], "windows_b": final["windows"]["rows_b"],
                      "windows_only_a": final["windows"]["only_a"], "windows_only_b": final["windows"]["only_b"], "windows_differing": final["windows"]["differing"],
                      "alerts_a": final["alerts"]["rows_a"], "alerts_b": final["alerts"]["rows_b"], "alerts_differing": final["alerts"]["only_a"] + final["alerts"]["only_b"] + final["alerts"]["differing"],
                      "identical": final["identical"]})
         write_csv("fault", rows)
-        if not final["identical"]:
-            log("WARNING: tables differ after recovery")
+        if final["windows"]["only_a"] or final["windows"]["only_b"] or final["alerts"]["only_a"] or final["alerts"]["only_b"]:
+            log("WARNING: recovery lost or invented windows or alerts")
+        elif final["windows"]["differing"] > 2 * max(noise) + 5:
+            log("WARNING: recovery differs from the reference by more than two uninterrupted reruns do")
 
 
 def main():
