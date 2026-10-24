@@ -36,17 +36,28 @@ Wikimedia SSE ──> producer ──┬──> Kafka (wiki-edits, keyed wiki|ti
 | `jobs/` | Spark jobs. `common.py` is the session factory (s3a to MinIO, Cassandra connector, RocksDB state store, UTC). `smoke.py` checks Kafka, Parquet and a Cassandra round-trip. `reference.py` is the batch thresholds/baseline job; `test_reference.py` checks it against a pure-Python oracle (plain scripts run with spark-submit, no pytest in the Spark image). `stream.py` is the streaming job (`parse`, `aggregate`, `flag` are pure functions the test reuses); `test_stream.py` runs it over the Kafka backlog into scratch tables and compares with an archive-built oracle. |
 | `cassandra/schema.cql` | Keyspace `wiki`; `windows` (partition `(wiki, day)`), `alerts` (partition `day`), `thresholds` (per namespace; `-1` = default), `baseline` (per wiki, namespace, hour), `smoke` (scratch). |
 | `dashboard/` | Streamlit app on :8501. `queries.py` (Cassandra reads, one partition each; pure pandas helpers), `chart.py` (palette, end-label placement, Altair spec; no Streamlit), `app.py` (page). `test_queries.py`: 10 tests incl. a headless app run. Started by `--profile app`. |
-| `results/` | Machine-readable outputs for the report (mounted at `/results` in the Spark container). `reference_summary.json` here is from a partial archive and is git-ignored until the final run. |
+| `results/` | Machine-readable outputs for the report (mounted at `/results` in the Spark container). `reference_summary.json` here is from the final archive (rerun 2026-10-24) and is git-ignored. |
 | `minio/` | Dockerfile that builds MinIO from a pinned source commit (no official images any more). |
 | `spark/` | Dockerfile; connector jars resolved at build time into `/opt/ivy` so runs need no network. |
 
-## Status (as of 2026-10-04; README.md holds the live table)
+## Status (as of 2026-10-24; README.md holds the live table)
 
-Done and collecting: Kafka (KRaft), MinIO, topic, producer plus archive. Done: Spark and Cassandra in compose;
-`jobs/smoke.py` prints `SMOKE OK` (verified 2026-10-04). Done on the partial archive: batch reference job
-(`jobs/reference.py`, tested by `jobs/test_reference.py`); re-run it once collection ends. Done: streaming job
-(`jobs/stream.py`, tested by `jobs/test_stream.py`); it is not running continuously yet, so the real `windows` and
-`alerts` tables are still empty. Done: replay tool (`producer/replay.py`); dashboard and the live `stream` service (profile `app`, running since 2026-10-04 evening; it writes the real `windows` and `alerts` tables, which now fill continuously). Done: evaluation, all five experiments (`eval/run_eval.py`, results in `docs/PLAN.md`). Not started: report.
+Everything is built and tested: Kafka (KRaft), MinIO, producer plus archive, Spark and Cassandra, `jobs/smoke.py`
+(`SMOKE OK`), the reference job, the streaming job, the replay tool, the dashboard, and the evaluation (all five
+experiments, `eval/run_eval.py`, results in `docs/PLAN.md` and `results/eval/`). The 2-page report is written
+(`docs/report.md`, `docs/report.pdf`, built by `docs/build_report.sh`) and the README is rewritten. Remaining: the
+fresh-eyes review in a separate chat (PLAN step 10) and submission on 2026-10-25.
+
+Collection ran to about 2026-10-22 11:54 UTC; the producer has since lost DNS to stream.wikimedia.org and nothing new
+arrives. The reference job was rerun on 2026-10-24 on the final archive: 35.8 M rows after de-duplication (about
+23 M real), 63,844 contested windows, default threshold still 19. The report keeps the 2026-10-05 snapshot
+(14.2 M rows, 26,151 windows) for its measurements and states the rerun in one sentence, because the experiments
+ran on that snapshot. `wiki.thresholds` and `wiki.baseline` now hold the final-archive values.
+
+The live `stream` service is **stopped** (user's decision, 2026-10-24: keep the infrastructure, do not restart it).
+It wrote the real `windows` and `alerts` tables until 2026-10-05; its checkpoint then pointed at Kafka offsets past the
+24 h retention (`OffsetOutOfRangeException`), so it crash-looped. Restarting needs a new `CHECKPOINT` path or
+`failOnDataLoss=false`. The report and README say the live tables end on 2026-10-05.
 
 Gotchas found while building: run Spark as `/opt/spark/bin/spark-submit` (it is not on PATH in the image);
 `ARCHIVE` needs the trailing slash (`s3a://archive/`); the smoke test writes only to `wiki.smoke`, never to

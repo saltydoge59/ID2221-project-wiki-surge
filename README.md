@@ -90,6 +90,11 @@ The stream drains the Kafka backlog (up to 24 hours of real events) and then fol
 within a minute or two. Flagged windows are rare by design; when none are flagged the dashboard lists the busiest
 multi-editor windows instead.
 
+In the submitted state the `stream` service is stopped. It wrote the live `windows` and `alerts` tables until
+2026-10-05; after that its checkpoint pointed at Kafka offsets older than the 24-hour retention, so it fails with
+`OffsetOutOfRangeException`. A fresh start needs a new `CHECKPOINT` path. The evaluation does not depend on the live
+tables, since it replays the archive.
+
 **7. Run the evaluation** (about 1.5 hours; see [below](#reproducing-the-evaluation-and-the-report)):
 
 ```sh
